@@ -1,0 +1,148 @@
+"""
+Parses ChatGPT's markdown response into structured blocks that can be mapped to
+Word document styles.
+"""
+
+import re
+from dataclasses import dataclass, field
+from typing import List, Tuple
+
+HEADING3_NUMBER_RE = re.compile(r"^\s*\d+\.\d+\.\d+\.?\s+(.+?)\s*$")
+HEADING2_NUMBER_RE = re.compile(r"^\s*\d+\.\d+\.?\s+(.+?)\s*$")
+CHAPTER_NUMBER_RE = re.compile(r"^\s*chapter\s+\d+\.?\s*$", re.I)
+NON_PROSE_START_RE = re.compile(
+    r"^\s*(table\s+\d+|fig\.?\s+\d+|figure\s+\d+|placement\s*:|equation\s+\d*)",
+    re.I,
+)
+
+
+@dataclass
+class Run:
+    text: str
+    bold: bool = False
+    italic: bool = False
+
+
+@dataclass
+class Block:
+    block_type: str  # 'chapter', 'heading2', 'heading3', 'body', 'list_item', 'artifact'
+    runs: List[Run] = field(default_factory=list)
+
+    @property
+    def plain_text(self) -> str:
+        return "".join(r.text for r in self.runs)
+
+
+def parse_inline(text: str) -> List[Run]:
+    """Split inline markdown (***bold+italic***, **bold**, *italic*) into Runs."""
+    runs: List[Run] = []
+    pattern = re.compile(r"(\*{3}(.+?)\*{3}|\*{2}(.+?)\*{2}|\*(.+?)\*|([^*]+))")
+    for match in pattern.finditer(text):
+        if match.group(2):
+            runs.append(Run(match.group(2), bold=True, italic=True))
+        elif match.group(3):
+            runs.append(Run(match.group(3), bold=True))
+        elif match.group(4):
+            runs.append(Run(match.group(4), italic=True))
+        elif match.group(5):
+            runs.append(Run(match.group(5)))
+    return runs if runs else [Run(text)]
+
+
+def _strip_numbered_heading(text: str) -> Tuple[str | None, str]:
+    """Return heading type and title for lines like '2.1 Title'."""
+    heading3 = HEADING3_NUMBER_RE.match(text)
+    if heading3:
+        return "heading3", heading3.group(1).strip()
+
+    heading2 = HEADING2_NUMBER_RE.match(text)
+    if heading2:
+        return "heading2", heading2.group(1).strip()
+
+    return None, text.strip()
+
+
+def _append_body_from_lines(blocks: List[Block], lines: List[str]):
+    content = " ".join(line.strip() for line in lines if line.strip())
+    if content:
+        blocks.append(Block("body", parse_inline(content)))
+
+
+def _is_non_prose_group(lines: List[str]) -> bool:
+    if not lines:
+        return False
+    if NON_PROSE_START_RE.match(lines[0]):
+        return True
+    if len(lines) > 1 and any("\t" in line for line in lines):
+        return True
+    if len(lines) > 1 and sum(1 for line in lines if "|" in line) >= 2:
+        return True
+    return False
+
+
+def _append_artifact_from_lines(blocks: List[Block], lines: List[str]):
+    content = "\n".join(line.strip() for line in lines if line.strip())
+    if content:
+        blocks.append(Block("artifact", parse_inline(content)))
+
+
+def parse_markdown(text: str) -> List[Block]:
+    """
+    Parse a markdown string into blocks.
+
+    Numbered section titles like '2.1 Title' become heading2 blocks, numbered
+    subsection titles like '2.1.1 Title' become heading3 blocks, and the manual
+    number is stripped so Word's heading numbering does not duplicate it.
+    """
+    blocks: List[Block] = []
+    raw_groups = re.split(r"\n{2,}", text.strip())
+
+    for group in raw_groups:
+        lines = [line.rstrip() for line in group.split("\n") if line.strip()]
+        if not lines:
+            continue
+
+        first = lines[0]
+        rest = lines[1:]
+
+        if _is_non_prose_group(lines):
+            _append_artifact_from_lines(blocks, lines)
+
+        elif CHAPTER_NUMBER_RE.match(first) and rest:
+            blocks.append(Block("chapter", parse_inline(rest[0].strip())))
+            _append_body_from_lines(blocks, rest[1:])
+
+        elif first.startswith("### "):
+            _, content = _strip_numbered_heading(first[4:].strip())
+            blocks.append(Block("heading3", parse_inline(content)))
+            _append_body_from_lines(blocks, rest)
+
+        elif first.startswith("## "):
+            _, content = _strip_numbered_heading(first[3:].strip())
+            blocks.append(Block("heading2", parse_inline(content)))
+            _append_body_from_lines(blocks, rest)
+
+        elif first.startswith("# "):
+            content = first[2:].strip()
+            if CHAPTER_NUMBER_RE.match(content) and rest:
+                content = rest[0].strip()
+                rest = rest[1:]
+            blocks.append(Block("chapter", parse_inline(content)))
+            _append_body_from_lines(blocks, rest)
+
+        else:
+            numbered_heading_type, content = _strip_numbered_heading(first)
+            if numbered_heading_type:
+                blocks.append(Block(numbered_heading_type, parse_inline(content)))
+                _append_body_from_lines(blocks, rest)
+
+            elif re.match(r"^[-*•]\s", first) or re.match(r"^\d+\.\s", first):
+                for line in lines:
+                    content = re.sub(r"^[-*•]\s+|^\d+\.\s+", "", line.strip())
+                    if content:
+                        blocks.append(Block("list_item", parse_inline(content)))
+
+            else:
+                _append_body_from_lines(blocks, lines)
+
+    return blocks

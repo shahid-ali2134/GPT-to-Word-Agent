@@ -1,0 +1,80 @@
+{
+  "browser": {
+    "default": "chrome",
+    "browsers": {
+      "chrome": {
+        "channel": "chrome",
+        "executable_path": null
+      },
+      "opera": {
+        "executable_path": "C:\\Users\\{username}\\AppData\\Local\\Programs\\Opera GX\\opera.exe",
+        "channel": null
+      }
+    }
+  },
+  "chatgpt": {
+    "base_url": "https://chatgpt.com"
+  },
+  "stealthwriter": {
+    "base_url": "https://stealthwriter.ai/",
+    "humanizer_url": "https://stealthwriter.ai/dashboard/humanizer",
+    "mode": "Ghost 5.2 Pro",
+    "timeout_sec": 180
+  },
+  "projects": {
+    "book": {
+      "chat_url": "https://chatgpt.com/c/your-chat-id",
+      "word_file_path": "C:\\Path\\To\\Your\\Book.docx",
+      "outlines": {},
+      "current_chapter": "chapter_1",
+      "browser": "chrome"
+    }
+  },
+  "styles": {
+    "chapter": {
+      "word_style": "Heading 1",
+      "font": "Times New Roman",
+      "size_pt": 14,
+      "all_caps": true,
+      "alignment": "center",
+      "space_before": 0,
+      "space_after": 0
+    },
+    "heading2": {
+      "word_style": "Heading 2",
+      "font": "Garamond",
+      "size_pt": 14,
+      "bold": true,
+      "alignment": "justify",
+      "hanging_cm": 1.02,
+      "space_before": 8,
+      "space_after": 4
+    },
+    "heading3": {
+      "word_style": "Heading 3",
+      "font": "Garamond",
+      "size_pt": 12,
+      "bold": true,
+      "alignment": "justify",
+      "hanging_cm": 1.27,
+      "space_before": 8,
+      "space_after": 4
+    },
+    "body": {
+      "word_style": "Normal",
+      "font": "Garamond",
+      "size_pt": 11,
+      "alignment": "justify",
+      "first_line_cm": 0.5,
+      "space_before": 0,
+      "space_after": 0
+    },
+    "page": {
+      "width_cm": 20.96,
+      "height_cm": 27.94,
+      "margin_cm": 2.54,
+      "header_dist_cm": 1.25,
+      "footer_dist_cm": 1.25
+    }
+  }
+}
