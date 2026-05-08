@@ -30,6 +30,7 @@ STYLE_KEY_MAP = {
     "body":       "body",
     "list_item":  "body",
     "artifact":   "body",
+    "table":      "body",
 }
 
 WORD_STYLE_MAP = {
@@ -39,6 +40,7 @@ WORD_STYLE_MAP = {
     "body":       "Normal",
     "list_item":  "Normal",
     "artifact":   "Normal",
+    "table":      "Normal",
 }
 
 
@@ -98,6 +100,46 @@ def _open_document(word_file_path: str, styles: dict) -> Document:
     return doc
 
 
+def _write_table_block(doc: Document, block, styles: dict):
+    """Add a Word table for a 'table' block. First row is treated as header."""
+    rows = block.table_rows
+    if not rows:
+        return
+    num_cols = max(len(r) for r in rows)
+    table = doc.add_table(rows=len(rows), cols=num_cols)
+    table.style = "Table Grid"
+    cfg = styles.get("body", {})
+    font_name = cfg.get("font", "Garamond")
+    font_size = Pt(cfg.get("size_pt", 11))
+
+    for r_idx, row_data in enumerate(rows):
+        is_header = r_idx == 0
+        for c_idx, cell_text in enumerate(row_data):
+            if c_idx >= num_cols:
+                break
+            cell = table.cell(r_idx, c_idx)
+            cell.text = ""
+            para = cell.paragraphs[0]
+            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = para.add_run(cell_text)
+            run.font.name = font_name
+            run.font.size = font_size
+            run.bold = is_header
+
+        # Fill any missing cells in this row
+        for c_idx in range(len(row_data), num_cols):
+            cell = table.cell(r_idx, c_idx)
+            cell.text = ""
+            para = cell.paragraphs[0]
+            para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = para.add_run("")
+            run.font.name = font_name
+            run.font.size = font_size
+
+    # Add a blank paragraph after the table so following text isn't flush
+    doc.add_paragraph()
+
+
 def append_blocks_to_word(blocks: list[Block], word_file_path: str) -> str:
     """Append pre-parsed blocks to the Word document using configured styles."""
     styles = _load_styles()
@@ -107,6 +149,10 @@ def append_blocks_to_word(blocks: list[Block], word_file_path: str) -> str:
         return "Warning: no content blocks parsed from response."
 
     for block in blocks:
+        if block.block_type == "table":
+            _write_table_block(doc, block, styles)
+            continue
+
         style_key = STYLE_KEY_MAP.get(block.block_type, "body")
         word_style = WORD_STYLE_MAP.get(block.block_type, "Normal")
         cfg = styles.get(style_key, {})
@@ -153,6 +199,7 @@ def _blocks_to_json(blocks: list[Block]) -> list[dict]:
         {
             "block_type": b.block_type,
             "runs": [{"text": r.text, "bold": r.bold, "italic": r.italic} for r in b.runs],
+            "table_rows": b.table_rows,
         }
         for b in blocks
     ]
@@ -162,7 +209,8 @@ def _blocks_from_json(data: list[dict]) -> list[Block]:
     result = []
     for entry in data:
         runs = [Run(text=r["text"], bold=r["bold"], italic=r["italic"]) for r in entry["runs"]]
-        result.append(Block(block_type=entry["block_type"], runs=runs))
+        table_rows = entry.get("table_rows", [])
+        result.append(Block(block_type=entry["block_type"], runs=runs, table_rows=table_rows))
     return result
 
 

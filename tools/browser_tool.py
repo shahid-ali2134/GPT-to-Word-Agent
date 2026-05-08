@@ -248,6 +248,19 @@ def _extract_last_response(page: Page) -> str:
             if (tag === 'br') return '\\n';
             if (tag === 'code' || tag === 'pre') return node.textContent;
 
+            if (tag === 'table') {
+                const rows = [];
+                node.querySelectorAll('tr').forEach(tr => {
+                    const cells = [];
+                    tr.querySelectorAll('th, td').forEach(cell => {
+                        cells.push(cell.textContent.trim().replace(/\\s+/g, ' '));
+                    });
+                    if (cells.length) rows.push(cells.join('\\t'));
+                });
+                return rows.length ? rows.join('\\n') + '\\n\\n' : '';
+            }
+            if (tag === 'tr' || tag === 'th' || tag === 'td') return '';
+
             node.childNodes.forEach(c => { out += walk(c); });
             return out;
         }

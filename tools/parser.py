@@ -26,8 +26,9 @@ class Run:
 
 @dataclass
 class Block:
-    block_type: str  # 'chapter', 'heading2', 'heading3', 'body', 'list_item', 'artifact'
+    block_type: str  # 'chapter', 'heading2', 'heading3', 'body', 'list_item', 'artifact', 'table'
     runs: List[Run] = field(default_factory=list)
+    table_rows: List[List[str]] = field(default_factory=list)  # rows × cols for 'table' blocks
 
     @property
     def plain_text(self) -> str:
@@ -91,6 +92,39 @@ def _append_artifact_from_lines(blocks: List[Block], lines: List[str]):
         blocks.append(Block("artifact", parse_inline(content)))
 
 
+def _is_table_group(lines: List[str]) -> bool:
+    """True when at least two lines contain tab characters (header + one data row)."""
+    return sum(1 for line in lines if "\t" in line) >= 2
+
+
+def _parse_table_group(lines: List[str]) -> List[Block]:
+    """
+    Parse a group that contains tab-separated table rows.
+    Lines before the first tab line are treated as a caption (artifact block).
+    Tab lines become a single 'table' block with structured row/column data.
+    """
+    result: List[Block] = []
+
+    first_tab = next((i for i, line in enumerate(lines) if "\t" in line), len(lines))
+    caption_lines = lines[:first_tab]
+    table_lines = lines[first_tab:]
+
+    if caption_lines:
+        _append_artifact_from_lines(result, caption_lines)
+
+    rows = [
+        [cell.strip() for cell in line.split("\t")]
+        for line in table_lines
+        if "\t" in line
+    ]
+    if rows:
+        block = Block(block_type="table")
+        block.table_rows = rows
+        result.append(block)
+
+    return result
+
+
 def parse_markdown(text: str) -> List[Block]:
     """
     Parse a markdown string into blocks.
@@ -110,7 +144,10 @@ def parse_markdown(text: str) -> List[Block]:
         first = lines[0]
         rest = lines[1:]
 
-        if _is_non_prose_group(lines):
+        if _is_table_group(lines):
+            blocks.extend(_parse_table_group(lines))
+
+        elif _is_non_prose_group(lines):
             _append_artifact_from_lines(blocks, lines)
 
         elif CHAPTER_NUMBER_RE.match(first) and rest:
