@@ -11,6 +11,8 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from .parser import parse_markdown, Block, Run
 
+PENDING_SUFFIX = ".pending.json"
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(ROOT, "config.json")
 
@@ -138,3 +140,68 @@ def append_to_word(content: str, word_file_path: str) -> str:
     applying the configured styles. Creates the file if it does not exist.
     """
     return append_blocks_to_word(parse_markdown(content), word_file_path)
+
+
+# ── Pending-file helpers ──────────────────────────────────────────────────────
+
+def _pending_path(word_file_path: str) -> str:
+    return word_file_path + PENDING_SUFFIX
+
+
+def _blocks_to_json(blocks: list[Block]) -> list[dict]:
+    return [
+        {
+            "block_type": b.block_type,
+            "runs": [{"text": r.text, "bold": r.bold, "italic": r.italic} for r in b.runs],
+        }
+        for b in blocks
+    ]
+
+
+def _blocks_from_json(data: list[dict]) -> list[Block]:
+    result = []
+    for entry in data:
+        runs = [Run(text=r["text"], bold=r["bold"], italic=r["italic"]) for r in entry["runs"]]
+        result.append(Block(block_type=entry["block_type"], runs=runs))
+    return result
+
+
+def save_pending_blocks(blocks: list[Block], word_file_path: str):
+    """Append *blocks* to the pending file for *word_file_path*."""
+    path = _pending_path(word_file_path)
+    existing: list[dict] = []
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = []
+    existing.extend(_blocks_to_json(blocks))
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(existing, f, ensure_ascii=False, indent=2)
+
+
+def has_pending_blocks(word_file_path: str) -> bool:
+    return os.path.exists(_pending_path(word_file_path))
+
+
+def recover_pending_blocks(word_file_path: str) -> str:
+    """
+    Read the pending file for *word_file_path*, append its blocks to the
+    Word document, and delete the pending file on success.
+    """
+    path = _pending_path(word_file_path)
+    if not os.path.exists(path):
+        return "No pending content found for this document."
+
+    with open(path, encoding="utf-8") as f:
+        raw = json.load(f)
+
+    blocks = _blocks_from_json(raw)
+    if not blocks:
+        os.remove(path)
+        return "Pending file was empty — nothing to recover."
+
+    result = append_blocks_to_word(blocks, word_file_path)
+    os.remove(path)
+    return f"Recovered {len(blocks)} block(s). {result}"

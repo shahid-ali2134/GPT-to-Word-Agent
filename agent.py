@@ -3,7 +3,7 @@ ChatGPT to Word Agent - simple CLI entry point.
 Run: python agent.py
 """
 
-from agent_core import DEFAULT_PROJECT, humanize_with_stealthwriter, write_complete_chapter
+from agent_core import DEFAULT_PROJECT, finish_chapter, humanize_with_stealthwriter, recover_pending, write_complete_chapter
 from tools.browser_tool import close_browser
 from tools.stealthwriter_tool import close_stealthwriter_browser
 
@@ -15,6 +15,8 @@ def main():
     print("=" * 56)
     print("  Commands:")
     print("    /writeCompleteChapter")
+    print("    /finishChapter")
+    print("    /recover")
     print("    /humanize")
     print("    /close")
     print("=" * 56)
@@ -74,8 +76,54 @@ def main():
             print()
             continue
 
+        if command == "/recover":
+            project = args[0] if len(args) >= 1 else DEFAULT_PROJECT
+
+            def progress(message: str):
+                print(message)
+
+            try:
+                result = recover_pending(project_name=project, progress=progress)
+            except Exception as exc:
+                print(f"Error: {exc}")
+                continue
+
+            print()
+            print(result["message"])
+            print(f"Document: {result['word_file_path']}")
+            print()
+            continue
+
+        if command == "/finishchapter":
+            project = args[0] if len(args) >= 1 else DEFAULT_PROJECT
+            chapter_input = input("Chapter number (optional, press Enter to skip): ").strip()
+            chapter_number = int(chapter_input) if chapter_input.isdigit() else None
+
+            def progress(message: str):
+                print(message)
+
+            try:
+                result = finish_chapter(
+                    project_name=project,
+                    chapter_number=chapter_number,
+                    progress=progress,
+                )
+            except Exception as exc:
+                print(f"Error: {exc}")
+                continue
+
+            print()
+            print("Done. Finished chapter and wrote to Word.")
+            print(f"Project: {result['project']}")
+            if result["chapter"]:
+                print(f"Chapter: {result['chapter']}")
+            print(f"Responses written: {result['written_sections']}")
+            print(f"Document: {result['word_file_path']}")
+            print()
+            continue
+
         if command != "/writecompletechapter":
-            print("Unknown command. Use /writeCompleteChapter or /humanize.")
+            print("Unknown command. Use /writeCompleteChapter, /finishChapter, /recover, or /humanize.")
             continue
 
         project = args[0] if len(args) >= 1 else DEFAULT_PROJECT

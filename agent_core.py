@@ -5,11 +5,12 @@ Shared workflow helpers for the ChatGPT to Word agent.
 import json
 import os
 import re
+import time
 
 from tools.browser_tool import get_last_response, navigate_to_chat, send_message
 from tools.parser import Block, parse_inline, parse_markdown
 from tools.stealthwriter_tool import humanize_text
-from tools.word_tool import append_blocks_to_word
+from tools.word_tool import append_blocks_to_word, has_pending_blocks, recover_pending_blocks, save_pending_blocks
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(ROOT, "config.json")
@@ -27,8 +28,14 @@ INTRO_PROMPT_TEMPLATE = (
     "Do not include any disclaimers, notes, or meta-commentary about the instructions."
 )
 CONTINUE_PROMPT = "continue to the next section!"
+CONCLUDE_CHAPTER_PROMPT = (
+    "Continue to the next section! As we are at the end of chapter so now "
+    "lets conclude the remaining sections! Write the main sections only!"
+)
 MAX_CHAPTER_STEPS = 40
+MAX_FINISH_STEPS = 40
 SECTION_DONE_MARKER = "[SECTION_WORKFLOW_COMPLETE]"
+SECTION_6_RE = re.compile(r"(?m)^\s*(?:#{1,4}|[*]{1,3})?\s*\d+\.6\b")
 SECTION_PROMPT_TEMPLATE = """Write only the requested part of chapter {chapter_number}.
 
 Use this section outline exactly as the scope:
@@ -61,6 +68,65 @@ _PREAMBLE_RE = re.compile(
     r"(it\s+)?seems\s+(like\s+)?there('?s|\s+is)\s+a)",
     re.I,
 )
+
+
+WORD_SAVE_RETRIES = 6
+WORD_SAVE_RETRY_DELAY = 10  # seconds between retries (6 × 10 = 60 s total)
+
+
+def _append_with_retry(blocks: list[Block], word_file_path: str, progress=None) -> str:
+    """
+    Call append_blocks_to_word with automatic retry on PermissionError
+    (Word file open). If all retries are exhausted the blocks are saved to
+    a .pending.json file and a clear error is raised.
+    """
+    report = progress or (lambda msg: None)
+    for attempt in range(WORD_SAVE_RETRIES + 1):
+        try:
+            return append_blocks_to_word(blocks, word_file_path)
+        except PermissionError:
+            if attempt < WORD_SAVE_RETRIES:
+                report(
+                    f"Warning: '{os.path.basename(word_file_path)}' is open in Word — "
+                    f"please close it. Retrying in {WORD_SAVE_RETRY_DELAY}s "
+                    f"(attempt {attempt + 1}/{WORD_SAVE_RETRIES})."
+                )
+                time.sleep(WORD_SAVE_RETRY_DELAY)
+            else:
+                save_pending_blocks(blocks, word_file_path)
+                raise PermissionError(
+                    f"Could not save to '{word_file_path}' after {WORD_SAVE_RETRIES} retries. "
+                    "Content saved to a pending file. Close the Word document and run /recover."
+                )
+
+
+def recover_pending(project_name: str = DEFAULT_PROJECT, progress=None) -> dict:
+    """
+    Write any blocks saved to the pending file back to the project's Word document.
+    Safe to call even if no pending file exists.
+    """
+    project = get_project(project_name)
+    word_file_path = project["word_file_path"]
+
+    def report(message: str):
+        if progress:
+            progress(message)
+
+    if not has_pending_blocks(word_file_path):
+        return {
+            "project": project_name,
+            "word_file_path": word_file_path,
+            "message": "No pending content found for this document.",
+        }
+
+    report("Recovering pending blocks from last failed write.")
+    result_msg = recover_pending_blocks(word_file_path)
+    report(result_msg)
+    return {
+        "project": project_name,
+        "word_file_path": word_file_path,
+        "message": result_msg,
+    }
 
 
 def _strip_gpt_preamble(text: str) -> str:
@@ -311,7 +377,7 @@ def write_complete_chapter(
     blocks_for_word = _prepend_chapter_heading(blocks_for_word, chapter_title)
     blocks_for_word = _fix_extra_chapter_blocks(blocks_for_word)
     report("Saving original headings and humanized body text to Word.")
-    append_result = append_blocks_to_word(blocks_for_word, word_file_path)
+    append_result = _append_with_retry(blocks_for_word, word_file_path, report)
     written_sections = 1
     report(append_result)
 
@@ -327,7 +393,7 @@ def write_complete_chapter(
         blocks_for_word = _humanize_for_word(response, project, report)
         blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
         report("Saving original headings and humanized body text to Word.")
-        append_result = append_blocks_to_word(blocks_for_word, word_file_path)
+        append_result = _append_with_retry(blocks_for_word, word_file_path, report)
         written_sections += 1
         report(append_result)
 
@@ -382,7 +448,7 @@ def write_sections(
     blocks_for_word = _humanize_for_word(response_for_word, project, report)
     blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
     report("Saving original headings and humanized body text to Word.")
-    append_result = append_blocks_to_word(blocks_for_word, word_file_path)
+    append_result = _append_with_retry(blocks_for_word, word_file_path, report)
     written_responses = 1
     report(append_result)
 
@@ -399,7 +465,7 @@ def write_sections(
         blocks_for_word = _humanize_for_word(response_for_word, project, report)
         blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
         report("Saving original headings and humanized body text to Word.")
-        append_result = append_blocks_to_word(blocks_for_word, word_file_path)
+        append_result = _append_with_retry(blocks_for_word, word_file_path, report)
         written_responses += 1
         report(append_result)
 
@@ -416,6 +482,79 @@ def write_sections(
         "chapter": selected_chapter,
         "word_file_path": word_file_path,
         "written_responses": written_responses,
+    }
+
+
+def _response_reached_section_6(text: str) -> bool:
+    """Return True if the response contains a section-6 heading (e.g. 4.6, 2.6, 15.6)."""
+    return bool(SECTION_6_RE.search(text))
+
+
+def finish_chapter(
+    project_name: str = DEFAULT_PROJECT,
+    chapter_number: int | None = None,
+    progress=None,
+) -> dict:
+    """
+    Continue an in-progress chapter from the current GPT position to completion.
+
+    Sends 'continue to the next section!' repeatedly. When a response contains a
+    section-6 heading (X.6), sends the concluding prompt once, writes the final
+    response, and stops. Chapter Summary is also honoured as an early-exit signal.
+    """
+    project = get_project(project_name)
+    word_file_path = project["word_file_path"]
+
+    def report(message: str):
+        if progress:
+            progress(message)
+
+    report(f"Opening ChatGPT chat for project '{project_name}'.")
+    navigate_result = navigate_to_chat(project["chat_url"], project.get("browser", "chrome"))
+    if navigate_result.lower().startswith(("warning", "error")):
+        raise RuntimeError(navigate_result)
+
+    written_sections = 0
+
+    while True:
+        if written_sections >= MAX_FINISH_STEPS:
+            raise RuntimeError(
+                f"Stopped after {MAX_FINISH_STEPS} responses without reaching section 6 "
+                "or a Chapter Summary."
+            )
+
+        report(f"Continuing to the next section ({written_sections + 1}).")
+        send_message(CONTINUE_PROMPT)
+        response = _strip_gpt_preamble(get_last_response())
+
+        blocks_for_word = _humanize_for_word(response, project, report)
+        blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
+        report("Saving to Word.")
+        append_result = _append_with_retry(blocks_for_word, word_file_path, report)
+        written_sections += 1
+        report(append_result)
+
+        if _contains_chapter_summary(response):
+            report("Chapter summary detected. Chapter complete.")
+            break
+
+        if _response_reached_section_6(response):
+            report("Section 6 reached. Sending concluding prompt.")
+            send_message(CONCLUDE_CHAPTER_PROMPT)
+            response = _strip_gpt_preamble(get_last_response())
+            blocks_for_word = _humanize_for_word(response, project, report)
+            blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
+            report("Saving final sections to Word.")
+            append_result = _append_with_retry(blocks_for_word, word_file_path, report)
+            written_sections += 1
+            report(append_result)
+            break
+
+    return {
+        "project": project_name,
+        "chapter": f"chapter_{chapter_number}" if chapter_number else None,
+        "word_file_path": word_file_path,
+        "written_sections": written_sections,
     }
 
 

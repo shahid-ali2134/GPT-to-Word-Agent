@@ -20,7 +20,9 @@ from dotenv import load_dotenv
 
 from agent_core import (
     DEFAULT_PROJECT,
+    finish_chapter,
     humanize_with_stealthwriter,
+    recover_pending,
     write_complete_chapter,
     write_sections,
 )
@@ -220,6 +222,77 @@ async def write_sections_command(
             f"Responses written: {result['written_responses']}\n"
             f"Document: {result['word_file_path']}"
         ),
+    )
+
+
+@bot.tree.command(
+    name="finishchapter",
+    description="Complete an in-progress chapter from where GPT left off.",
+)
+@app_commands.describe(
+    chapter_number="Chapter number (optional, for display only)",
+    project="Project key from config.json",
+)
+async def finish_chapter_command(
+    interaction: discord.Interaction,
+    chapter_number: int | None = None,
+    project: str = DEFAULT_PROJECT,
+):
+    await interaction.response.defer(thinking=True)
+    loop = asyncio.get_running_loop()
+    progress = _make_progress_sender(interaction, loop)
+
+    try:
+        result = await loop.run_in_executor(
+            executor,
+            lambda: finish_chapter(
+                project_name=project,
+                chapter_number=chapter_number,
+                progress=progress,
+            ),
+        )
+    except Exception as exc:
+        await _send_followup(interaction, f"Error: {exc}")
+        raise
+
+    chapter_line = f"Chapter: {result['chapter']}\n" if result["chapter"] else ""
+    await _send_followup(
+        interaction,
+        (
+            "Done. Finished chapter and wrote to Word.\n"
+            f"Project: {result['project']}\n"
+            f"{chapter_line}"
+            f"Responses written: {result['written_sections']}\n"
+            f"Document: {result['word_file_path']}"
+        ),
+    )
+
+
+@bot.tree.command(
+    name="recover",
+    description="Write any content that failed to save last time back to the Word document.",
+)
+@app_commands.describe(project="Project key from config.json")
+async def recover_command(
+    interaction: discord.Interaction,
+    project: str = DEFAULT_PROJECT,
+):
+    await interaction.response.defer(thinking=True)
+    loop = asyncio.get_running_loop()
+    progress = _make_progress_sender(interaction, loop)
+
+    try:
+        result = await loop.run_in_executor(
+            executor,
+            lambda: recover_pending(project_name=project, progress=progress),
+        )
+    except Exception as exc:
+        await _send_followup(interaction, f"Error: {exc}")
+        raise
+
+    await _send_followup(
+        interaction,
+        f"{result['message']}\nDocument: {result['word_file_path']}",
     )
 
 
