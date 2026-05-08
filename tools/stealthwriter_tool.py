@@ -301,6 +301,54 @@ def _wait_for_result_and_copy(page: Page, original_text: str, timeout_sec: int, 
     raise TimeoutError("Timed out waiting for StealthWriter humanized result.")
 
 
+def _extract_human_score(page: Page) -> int | None:
+    """
+    Read the human-percentage score shown in StealthWriter's result panel.
+    Looks for a bare '%%' text node that has 'human' within a few nodes of it.
+    Returns the integer percentage, or None if no score is visible.
+    """
+    try:
+        score = page.evaluate(
+            """() => {
+                const walker = document.createTreeWalker(
+                    document.body, NodeFilter.SHOW_TEXT
+                );
+                const nodes = [];
+                let n;
+                while ((n = walker.nextNode())) {
+                    const t = n.textContent.trim();
+                    if (t) nodes.push(t);
+                }
+                for (let i = 0; i < nodes.length; i++) {
+                    const m = nodes[i].match(/^(\\d+)%$/);
+                    if (m) {
+                        const start = Math.max(0, i - 4);
+                        const nearby = nodes.slice(start, i + 5).join(' ');
+                        if (/human/i.test(nearby)) {
+                            return parseInt(m[1], 10);
+                        }
+                    }
+                }
+                return null;
+            }"""
+        )
+        return score if isinstance(score, int) else None
+    except Exception:
+        return None
+
+
+def _try_rehumanize(page: Page, original_text: str, timeout_sec: int, progress=None) -> str | None:
+    """Click Rehumanize (or Humanize again) and return the new result, or None on failure."""
+    btn = _find_button(page, r"rehumanize", timeout_ms=3_000)
+    if btn is None:
+        btn = _find_button(page, r"^humanize$", timeout_ms=3_000)
+    if btn is None:
+        return None
+    btn.click()
+    page.wait_for_timeout(1_500)
+    return _wait_for_result_and_copy(page, original_text, timeout_sec, progress)
+
+
 def _humanize_text_sync(
     text: str,
     browser_name: str = "chrome",
@@ -309,6 +357,8 @@ def _humanize_text_sync(
 ) -> str:
     """
     Humanize text through StealthWriter's website UI and return the result.
+    If the human score is below the configured threshold, retries up to
+    max_rehumanize times before accepting whatever result is available.
     """
     if not text or not text.strip():
         raise ValueError("Text is required for StealthWriter humanization.")
@@ -316,6 +366,8 @@ def _humanize_text_sync(
     cfg = _stealthwriter_config()
     mode_name = mode_name or cfg.get("mode", "Ghost 5.2 Pro")
     timeout_sec = int(cfg.get("timeout_sec", 180))
+    threshold = int(cfg.get("human_score_threshold", 70))
+    max_rehumanize = int(cfg.get("max_rehumanize", 2))
 
     page = _ensure_browser(browser_name)
     _navigate_to_humanizer(page, progress)
@@ -336,6 +388,26 @@ def _humanize_text_sync(
     humanize_button.click()
 
     result = _wait_for_result_and_copy(page, text, timeout_sec, progress)
+
+    for attempt in range(max_rehumanize):
+        score = _extract_human_score(page)
+        if score is None:
+            break
+        if score >= threshold:
+            _report(progress, f"Human score {score}% meets threshold ({threshold}%).")
+            break
+        _report(
+            progress,
+            f"Human score {score}% is below {threshold}%. "
+            f"Rehumanizing (attempt {attempt + 1}/{max_rehumanize}).",
+        )
+        new_result = _try_rehumanize(page, text, timeout_sec, progress)
+        if new_result:
+            result = new_result
+        else:
+            _report(progress, "Rehumanize button not found. Using current result.")
+            break
+
     save_browser_state()
     return result
 

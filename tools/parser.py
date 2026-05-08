@@ -14,6 +14,7 @@ NON_PROSE_START_RE = re.compile(
     r"^\s*(table\s+\d+|fig\.?\s+\d+|figure\s+\d+|placement\s*:|equation\s+\d*)",
     re.I,
 )
+_INLINE_MARKER_RE = re.compile(r"^[\*_]{1,3}|[\*_]{1,3}$")
 
 
 @dataclass
@@ -68,10 +69,14 @@ def _append_body_from_lines(blocks: List[Block], lines: List[str]):
         blocks.append(Block("body", parse_inline(content)))
 
 
+def _strip_inline_markers(text: str) -> str:
+    return _INLINE_MARKER_RE.sub("", text).strip()
+
+
 def _is_non_prose_group(lines: List[str]) -> bool:
     if not lines:
         return False
-    if NON_PROSE_START_RE.match(lines[0]):
+    if NON_PROSE_START_RE.match(_strip_inline_markers(lines[0])):
         return True
     if len(lines) > 1 and any("\t" in line for line in lines):
         return True
@@ -113,21 +118,38 @@ def parse_markdown(text: str) -> List[Block]:
             _append_body_from_lines(blocks, rest[1:])
 
         elif first.startswith("### "):
-            _, content = _strip_numbered_heading(first[4:].strip())
-            blocks.append(Block("heading3", parse_inline(content)))
-            _append_body_from_lines(blocks, rest)
+            heading_text = first[4:].strip()
+            if NON_PROSE_START_RE.match(_strip_inline_markers(heading_text)):
+                _append_artifact_from_lines(blocks, [heading_text] + rest)
+            else:
+                detected_type, content = _strip_numbered_heading(heading_text)
+                block_type = detected_type if detected_type else "heading3"
+                blocks.append(Block(block_type, parse_inline(content)))
+                _append_body_from_lines(blocks, rest)
 
         elif first.startswith("## "):
-            _, content = _strip_numbered_heading(first[3:].strip())
-            blocks.append(Block("heading2", parse_inline(content)))
-            _append_body_from_lines(blocks, rest)
+            heading_text = first[3:].strip()
+            if NON_PROSE_START_RE.match(_strip_inline_markers(heading_text)):
+                _append_artifact_from_lines(blocks, [heading_text] + rest)
+            else:
+                detected_type, content = _strip_numbered_heading(heading_text)
+                block_type = detected_type if detected_type else "heading2"
+                blocks.append(Block(block_type, parse_inline(content)))
+                _append_body_from_lines(blocks, rest)
 
         elif first.startswith("# "):
             content = first[2:].strip()
             if CHAPTER_NUMBER_RE.match(content) and rest:
                 content = rest[0].strip()
                 rest = rest[1:]
-            blocks.append(Block("chapter", parse_inline(content)))
+                blocks.append(Block("chapter", parse_inline(content)))
+            else:
+                # ChatGPT sometimes uses h1 for section headings — reclassify if numbered
+                numbered_type, stripped = _strip_numbered_heading(content)
+                if numbered_type:
+                    blocks.append(Block(numbered_type, parse_inline(stripped)))
+                else:
+                    blocks.append(Block("chapter", parse_inline(content)))
             _append_body_from_lines(blocks, rest)
 
         else:

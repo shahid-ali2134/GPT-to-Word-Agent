@@ -22,7 +22,9 @@ OUTLINE_PROMPT_TEMPLATE = (
 )
 INTRO_PROMPT_TEMPLATE = (
     "lets start writing write the introductory paragraphs of chapter "
-    "{chapter_number} before {first_section}"
+    "{chapter_number} before {first_section}. "
+    "Begin your response directly with the content. "
+    "Do not include any disclaimers, notes, or meta-commentary about the instructions."
 )
 CONTINUE_PROMPT = "continue to the next section!"
 MAX_CHAPTER_STEPS = 40
@@ -37,6 +39,7 @@ Do not write content outside this outline.
 Do not write the chapter introduction unless it is included in this outline.
 Do not write the chapter summary unless it is included in this outline.
 If the content is too long, write as much as you can and stop at a clean boundary.
+Begin your response directly with the content. Do not include any disclaimers, notes, or meta-commentary about the instructions.
 When all requested sections and subsections are fully complete, end your final response with:
 {done_marker}"""
 CONTINUE_SECTION_PROMPT = (
@@ -45,6 +48,74 @@ CONTINUE_SECTION_PROMPT = (
 )
 MAX_SECTION_STEPS = 20
 CHAPTER_TITLE_RE = re.compile(r"^\s*chapter\s+\d+\.?\s*[:\-]?\s*(.*?)\s*$", re.I)
+
+_PREAMBLE_RE = re.compile(
+    r"^(there'?s?\s+a\s+(slight|small|minor)\s+(disconnect|mismatch|issue|note)|"
+    r"there\s+is\s+a\s+(slight|small|minor)\s+(disconnect|mismatch|issue|note)|"
+    r"(note|please\s+note|just\s+a\s+note)\s*:|"
+    r"i\s+(will|shall)\s+proceed|"
+    r"i\s+notice[d]?|"
+    r"as\s+noted|"
+    r"just\s+to\s+clarify|"
+    r"before\s+i\s+(begin|start)|"
+    r"(it\s+)?seems\s+(like\s+)?there('?s|\s+is)\s+a)",
+    re.I,
+)
+
+
+def _strip_gpt_preamble(text: str) -> str:
+    """Remove any leading meta-commentary GPT prepends before the actual content."""
+    paragraphs = re.split(r"\n{2,}", text.strip())
+    while paragraphs and _PREAMBLE_RE.match(paragraphs[0].strip()):
+        paragraphs.pop(0)
+    return "\n\n".join(paragraphs).strip()
+
+
+def _demote_chapter_to_heading2(blocks: list[Block]) -> list[Block]:
+    """Demote all chapter-level blocks to heading2 (for section/continue responses)."""
+    return [Block("heading2", b.runs) if b.block_type == "chapter" else b for b in blocks]
+
+
+def _fix_extra_chapter_blocks(blocks: list[Block]) -> list[Block]:
+    """After chapter title is prepended, demote any additional chapter blocks to heading2."""
+    result = []
+    chapter_seen = False
+    for block in blocks:
+        if block.block_type == "chapter":
+            if chapter_seen:
+                result.append(Block("heading2", block.runs))
+            else:
+                chapter_seen = True
+                result.append(block)
+        else:
+            result.append(block)
+    return result
+
+
+def _normalize_chapter_opening(blocks: list[Block], chapter_title: str) -> list[Block]:
+    """
+    Remove GPT's 'Chapter X' label block and any duplicate chapter title heading
+    so that _prepend_chapter_heading can cleanly add the correct Heading 1 block.
+
+    GPT often outputs:  # Chapter 2 (bare label)  +  ## From Predictive Models... (real title)
+    Both need to be removed before the correct title from the outline is prepended.
+    """
+    result = list(blocks)
+
+    # Remove a bare "Chapter X" chapter block that has no real title
+    if result and result[0].block_type == "chapter":
+        m = CHAPTER_TITLE_RE.match(result[0].plain_text.strip())
+        if m and not m.group(1).strip():
+            result.pop(0)
+
+    # Remove a leading heading that is just the chapter title (GPT put the title as a subheading)
+    if result and result[0].block_type in ("heading2", "heading3"):
+        block_text = result[0].plain_text.strip().lower()
+        title_text = chapter_title.strip().lower()
+        if block_text == title_text:
+            result.pop(0)
+
+    return result
 
 
 def load_config() -> dict:
@@ -234,9 +305,11 @@ def write_complete_chapter(
     intro_prompt = build_intro_prompt(chapter_number, chapter_outline)
     report("Writing the introductory paragraphs.")
     send_message(intro_prompt)
-    response = get_last_response()
+    response = _strip_gpt_preamble(get_last_response())
     blocks_for_word = _humanize_for_word(response, project, report)
+    blocks_for_word = _normalize_chapter_opening(blocks_for_word, chapter_title)
     blocks_for_word = _prepend_chapter_heading(blocks_for_word, chapter_title)
+    blocks_for_word = _fix_extra_chapter_blocks(blocks_for_word)
     report("Saving original headings and humanized body text to Word.")
     append_result = append_blocks_to_word(blocks_for_word, word_file_path)
     written_sections = 1
@@ -250,8 +323,9 @@ def write_complete_chapter(
 
         report(f"Continuing to the next section ({written_sections + 1}).")
         send_message(CONTINUE_PROMPT)
-        response = get_last_response()
+        response = _strip_gpt_preamble(get_last_response())
         blocks_for_word = _humanize_for_word(response, project, report)
+        blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
         report("Saving original headings and humanized body text to Word.")
         append_result = append_blocks_to_word(blocks_for_word, word_file_path)
         written_sections += 1
@@ -303,9 +377,10 @@ def write_sections(
 
     report("Writing the requested section outline.")
     send_message(build_section_prompt(chapter_number, sections_outline))
-    response = get_last_response()
+    response = _strip_gpt_preamble(get_last_response())
     response_for_word = _strip_done_marker(response)
     blocks_for_word = _humanize_for_word(response_for_word, project, report)
+    blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
     report("Saving original headings and humanized body text to Word.")
     append_result = append_blocks_to_word(blocks_for_word, word_file_path)
     written_responses = 1
@@ -319,9 +394,10 @@ def write_sections(
 
         report(f"Continuing requested sections ({written_responses + 1}).")
         send_message(CONTINUE_SECTION_PROMPT)
-        response = get_last_response()
+        response = _strip_gpt_preamble(get_last_response())
         response_for_word = _strip_done_marker(response)
         blocks_for_word = _humanize_for_word(response_for_word, project, report)
+        blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
         report("Saving original headings and humanized body text to Word.")
         append_result = append_blocks_to_word(blocks_for_word, word_file_path)
         written_responses += 1
