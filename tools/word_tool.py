@@ -31,6 +31,7 @@ STYLE_KEY_MAP = {
     "list_item":  "body",
     "artifact":   "body",
     "table":      "body",
+    "equation":   "body",
 }
 
 WORD_STYLE_MAP = {
@@ -41,6 +42,7 @@ WORD_STYLE_MAP = {
     "list_item":  "Normal",
     "artifact":   "Normal",
     "table":      "Normal",
+    "equation":   "Normal",
 }
 
 
@@ -100,6 +102,188 @@ def _open_document(word_file_path: str, styles: dict) -> Document:
     return doc
 
 
+_OMML_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+_NARY_OPS = {"∑", "∏", "∫", "∬", "∭", "∮", "⋃", "⋂"}
+
+
+def _mml_to_omml_node(mml, parent):
+    """Recursively convert one MathML element into OMML children of *parent*."""
+    from lxml import etree
+
+    ns = _OMML_NS
+    tag = mml.tag.split("}")[-1] if "}" in mml.tag else mml.tag
+    ch = list(mml)
+
+    def sub(tag_name, elem=parent):
+        return etree.SubElement(elem, f"{{{ns}}}{tag_name}")
+
+    def run(text, italic=False, p=parent):
+        r = etree.SubElement(p, f"{{{ns}}}r")
+        if italic:
+            rpr = etree.SubElement(r, f"{{{ns}}}rPr")
+            sty = etree.SubElement(rpr, f"{{{ns}}}sty")
+            sty.set(f"{{{ns}}}val", "i")
+        t = etree.SubElement(r, f"{{{ns}}}t")
+        t.text = text
+        return r
+
+    def recurse(mml_node, omml_parent):
+        _mml_to_omml_node(mml_node, omml_parent)
+
+    # Transparent containers
+    if tag in ("math", "mrow", "mstyle", "merror", "mpadded",
+               "mphantom", "semantics", "mfenced"):
+        for child in ch:
+            recurse(child, parent)
+
+    elif tag == "annotation":
+        pass  # skip LaTeX source annotation
+
+    elif tag in ("mi", "mn", "mo", "mtext", "ms"):
+        text = "".join(mml.itertext())
+        if text.startswith("\\"):
+            text = text[1:]  # strip backslash — latex2mathml leaves \arg, \max, etc.
+        if text:
+            run(text, italic=(tag == "mi" and len(text) == 1))
+
+    elif tag == "msub" and len(ch) >= 2:
+        ssub = sub("sSub")
+        recurse(ch[0], sub("e", ssub))
+        recurse(ch[1], sub("sub", ssub))
+
+    elif tag == "msup" and len(ch) >= 2:
+        ssup = sub("sSup")
+        recurse(ch[0], sub("e", ssup))
+        recurse(ch[1], sub("sup", ssup))
+
+    elif tag == "msubsup" and len(ch) >= 3:
+        sss = sub("sSubSup")
+        recurse(ch[0], sub("e", sss))
+        recurse(ch[1], sub("sub", sss))
+        recurse(ch[2], sub("sup", sss))
+
+    elif tag == "mfrac" and len(ch) >= 2:
+        f = sub("f")
+        recurse(ch[0], sub("num", f))
+        recurse(ch[1], sub("den", f))
+
+    elif tag == "msqrt":
+        rad = sub("rad")
+        radpr = sub("radPr", rad)
+        dh = sub("degHide", radpr)
+        dh.set(f"{{{ns}}}val", "1")
+        sub("deg", rad)  # empty = square root
+        e = sub("e", rad)
+        for child in ch:
+            recurse(child, e)
+
+    elif tag == "mroot" and len(ch) >= 2:
+        rad = sub("rad")
+        recurse(ch[1], sub("deg", rad))
+        recurse(ch[0], sub("e", rad))
+
+    elif tag in ("munder", "mover", "munderover"):
+        op_text = "".join(ch[0].itertext()).strip() if ch else ""
+        if op_text in _NARY_OPS:
+            nary = sub("nary")
+            narypr = sub("naryPr", nary)
+            chr_e = sub("chr", narypr)
+            chr_e.set(f"{{{ns}}}val", op_text)
+            if tag == "munder":
+                h = sub("supHide", narypr); h.set(f"{{{ns}}}val", "1")
+                recurse(ch[1], sub("sub", nary))
+                sub("sup", nary)
+            elif tag == "mover":
+                h = sub("subHide", narypr); h.set(f"{{{ns}}}val", "1")
+                sub("sub", nary)
+                recurse(ch[1], sub("sup", nary))
+            else:
+                recurse(ch[1], sub("sub", nary))
+                recurse(ch[2], sub("sup", nary))
+            sub("e", nary)
+        elif tag == "munder":
+            ll = sub("limLow")
+            recurse(ch[0], sub("e", ll))
+            if len(ch) >= 2: recurse(ch[1], sub("lim", ll))
+        elif tag == "mover":
+            lu = sub("limUpp")
+            recurse(ch[0], sub("e", lu))
+            if len(ch) >= 2: recurse(ch[1], sub("lim", lu))
+        else:  # munderover non-nary
+            sss = sub("sSubSup")
+            recurse(ch[0], sub("e", sss))
+            if len(ch) >= 2: recurse(ch[1], sub("sub", sss))
+            if len(ch) >= 3: recurse(ch[2], sub("sup", sss))
+
+    elif tag == "mtable":
+        m = sub("m")
+        for mtr in ch:
+            mr = sub("mr", m)
+            for mtd in mtr:
+                e = sub("e", mr)
+                for child in mtd:
+                    recurse(child, e)
+
+    else:
+        text = "".join(mml.itertext())
+        if text.strip():
+            run(text)
+
+
+def _latex_to_omml(latex: str):
+    """
+    Convert a LaTeX string to an OMML lxml element (no XSLT file needed).
+    Uses latex2mathml for LaTeX→MathML, then a Python MathML→OMML converter.
+    Returns None on any failure.
+    """
+    try:
+        import latex2mathml.converter
+        from lxml import etree
+    except ImportError:
+        return None
+
+    try:
+        mathml_str = latex2mathml.converter.convert(latex)
+        mathml_tree = etree.fromstring(mathml_str.encode("utf-8"))
+    except Exception:
+        return None
+
+    try:
+        omath = etree.Element(f"{{{_OMML_NS}}}oMath")
+        _mml_to_omml_node(mathml_tree, omath)
+        return omath
+    except Exception:
+        return None
+
+
+def _write_equation_block(doc: Document, block, styles: dict):
+    """
+    Write a display equation into the Word document.
+    Uses OMML (proper Word equation object) when possible; falls back to
+    centered italic LaTeX text so nothing is silently lost.
+    """
+    from docx.oxml import OxmlElement
+
+    latex = block.latex
+    if not latex:
+        return
+
+    omml = _latex_to_omml(latex)
+    if omml is not None:
+        para = doc.add_paragraph()
+        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        para._p.append(omml)
+    else:
+        # Fallback: centered italic text with the raw LaTeX
+        cfg = styles.get("body", {})
+        para = doc.add_paragraph()
+        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = para.add_run(latex)
+        run.font.name = cfg.get("font", "Garamond")
+        run.font.size = Pt(cfg.get("size_pt", 11))
+        run.italic = True
+
+
 def _write_table_block(doc: Document, block, styles: dict):
     """Add a Word table for a 'table' block. First row is treated as header."""
     rows = block.table_rows
@@ -153,6 +337,10 @@ def append_blocks_to_word(blocks: list[Block], word_file_path: str) -> str:
             _write_table_block(doc, block, styles)
             continue
 
+        if block.block_type == "equation":
+            _write_equation_block(doc, block, styles)
+            continue
+
         style_key = STYLE_KEY_MAP.get(block.block_type, "body")
         word_style = WORD_STYLE_MAP.get(block.block_type, "Normal")
         cfg = styles.get(style_key, {})
@@ -200,6 +388,7 @@ def _blocks_to_json(blocks: list[Block]) -> list[dict]:
             "block_type": b.block_type,
             "runs": [{"text": r.text, "bold": r.bold, "italic": r.italic} for r in b.runs],
             "table_rows": b.table_rows,
+            "latex": b.latex,
         }
         for b in blocks
     ]
@@ -210,7 +399,8 @@ def _blocks_from_json(data: list[dict]) -> list[Block]:
     for entry in data:
         runs = [Run(text=r["text"], bold=r["bold"], italic=r["italic"]) for r in entry["runs"]]
         table_rows = entry.get("table_rows", [])
-        result.append(Block(block_type=entry["block_type"], runs=runs, table_rows=table_rows))
+        latex = entry.get("latex", "")
+        result.append(Block(block_type=entry["block_type"], runs=runs, table_rows=table_rows, latex=latex))
     return result
 
 

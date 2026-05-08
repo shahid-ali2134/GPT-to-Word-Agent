@@ -221,12 +221,28 @@ def _extract_last_response(page: Page) -> str:
         function walk(node) {
             if (node.nodeType === 3) return node.textContent;
             const tag = (node.tagName || '').toLowerCase();
+            const cls = (typeof node.className === 'string') ? node.className : '';
             let out = '';
 
-            if (tag === 'h1') return '# ' + node.textContent.trim() + '\\n\\n';
-            if (tag === 'h2') return '## ' + node.textContent.trim() + '\\n\\n';
-            if (tag === 'h3') return '### ' + node.textContent.trim() + '\\n\\n';
-            if (tag === 'h4') return '#### ' + node.textContent.trim() + '\\n\\n';
+            // KaTeX display equation wrapper — extract raw LaTeX from MathML annotation
+            if (cls.includes('katex-display')) {
+                const ann = node.querySelector('annotation[encoding="application/x-tex"]');
+                if (ann) return '\\n\\n$$' + ann.textContent.trim() + '$$\\n\\n';
+                return node.textContent;
+            }
+            // KaTeX inline equation
+            if (cls.includes('katex') && !cls.includes('katex-html') && !cls.includes('katex-mathml')) {
+                const ann = node.querySelector('annotation[encoding="application/x-tex"]');
+                if (ann) return '$$' + ann.textContent.trim() + '$$';
+                return node.textContent;
+            }
+            // Skip already-consumed KaTeX sub-elements
+            if (cls.includes('katex-html') || cls.includes('katex-mathml')) return '';
+
+            if (tag === 'h1') { let t=''; node.childNodes.forEach(c=>{t+=walk(c);}); return '# ' + t.trim() + '\\n\\n'; }
+            if (tag === 'h2') { let t=''; node.childNodes.forEach(c=>{t+=walk(c);}); return '## ' + t.trim() + '\\n\\n'; }
+            if (tag === 'h3') { let t=''; node.childNodes.forEach(c=>{t+=walk(c);}); return '### ' + t.trim() + '\\n\\n'; }
+            if (tag === 'h4') { let t=''; node.childNodes.forEach(c=>{t+=walk(c);}); return '#### ' + t.trim() + '\\n\\n'; }
 
             if (tag === 'p') {
                 let inner = '';
@@ -234,12 +250,16 @@ def _extract_last_response(page: Page) -> str:
                     const ct = (c.tagName || '').toLowerCase();
                     if (ct === 'strong') inner += '**' + c.textContent + '**';
                     else if (ct === 'em')     inner += '*' + c.textContent + '*';
-                    else inner += c.textContent;
+                    else inner += walk(c);
                 });
                 return inner.trim() + '\\n\\n';
             }
 
-            if (tag === 'li') return '- ' + node.textContent.trim() + '\\n';
+            if (tag === 'li') {
+                let inner = '';
+                node.childNodes.forEach(c => { inner += walk(c); });
+                return '- ' + inner.trim() + '\\n';
+            }
             if (tag === 'ul' || tag === 'ol') {
                 let s = '';
                 node.childNodes.forEach(c => { s += walk(c); });

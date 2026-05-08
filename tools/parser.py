@@ -26,9 +26,10 @@ class Run:
 
 @dataclass
 class Block:
-    block_type: str  # 'chapter', 'heading2', 'heading3', 'body', 'list_item', 'artifact', 'table'
+    block_type: str  # 'chapter', 'heading2', 'heading3', 'body', 'list_item', 'artifact', 'table', 'equation'
     runs: List[Run] = field(default_factory=list)
     table_rows: List[List[str]] = field(default_factory=list)  # rows × cols for 'table' blocks
+    latex: str = ""  # raw LaTeX string for 'equation' blocks
 
     @property
     def plain_text(self) -> str:
@@ -36,9 +37,12 @@ class Block:
 
 
 def parse_inline(text: str) -> List[Run]:
-    """Split inline markdown (***bold+italic***, **bold**, *italic*) into Runs."""
+    """Split inline markdown (***bold+italic***, **bold**, *italic*) into Runs.
+    Inline $$latex$$ is rendered as italic text (the LaTeX expression, no markers)."""
     runs: List[Run] = []
-    pattern = re.compile(r"(\*{3}(.+?)\*{3}|\*{2}(.+?)\*{2}|\*(.+?)\*|([^*]+))")
+    pattern = re.compile(
+        r"(\*{3}(.+?)\*{3}|\*{2}(.+?)\*{2}|\*(.+?)\*|\$\$(.+?)\$\$|([^*$]+))"
+    )
     for match in pattern.finditer(text):
         if match.group(2):
             runs.append(Run(match.group(2), bold=True, italic=True))
@@ -46,8 +50,10 @@ def parse_inline(text: str) -> List[Run]:
             runs.append(Run(match.group(3), bold=True))
         elif match.group(4):
             runs.append(Run(match.group(4), italic=True))
-        elif match.group(5):
-            runs.append(Run(match.group(5)))
+        elif match.group(5):  # inline $$...$$
+            runs.append(Run(match.group(5), italic=True))
+        elif match.group(6):
+            runs.append(Run(match.group(6)))
     return runs if runs else [Run(text)]
 
 
@@ -125,6 +131,25 @@ def _parse_table_group(lines: List[str]) -> List[Block]:
     return result
 
 
+def _is_display_equation(lines: List[str]) -> bool:
+    """True when the group is a single $$latex$$ block."""
+    if len(lines) == 1:
+        s = lines[0].strip()
+        return s.startswith("$$") and s.endswith("$$") and len(s) > 4
+    # Multi-line: $$ on first line, $$ on last line
+    return lines[0].strip() == "$$" and lines[-1].strip() == "$$" and len(lines) >= 3
+
+
+def _parse_display_equation(lines: List[str]) -> Block:
+    if len(lines) == 1:
+        latex = lines[0].strip()[2:-2].strip()
+    else:
+        latex = "\n".join(lines[1:-1]).strip()
+    b = Block("equation")
+    b.latex = latex
+    return b
+
+
 def parse_markdown(text: str) -> List[Block]:
     """
     Parse a markdown string into blocks.
@@ -146,6 +171,9 @@ def parse_markdown(text: str) -> List[Block]:
 
         if _is_table_group(lines):
             blocks.extend(_parse_table_group(lines))
+
+        elif _is_display_equation(lines):
+            blocks.append(_parse_display_equation(lines))
 
         elif _is_non_prose_group(lines):
             _append_artifact_from_lines(blocks, lines)
