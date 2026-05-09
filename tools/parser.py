@@ -203,6 +203,10 @@ def _parse_figure_block(lines: List[str]) -> List[Block]:
         (re.search(r"\b(insert|place|put|add)\b", first, re.I) and fig_num)
     )
     if is_placement:
+        if fig_num == 0:
+            # "Placement:" line with no figure number — skip as artifact
+            _append_artifact_from_lines(result, lines)
+            return result
         b = Block("figure_placeholder")
         b.figure_number = fig_num
         result.append(b)

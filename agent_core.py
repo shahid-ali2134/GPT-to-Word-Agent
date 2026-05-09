@@ -91,6 +91,8 @@ def _resolve_figures(
             continue
 
         fig_num = block.figure_number
+        if fig_num == 0:
+            continue  # malformed placeholder — no figure number detected
         report(f"Requesting figure {fig_num} from ChatGPT.")
         send_message(f"Draw figure {fig_num} please!")
         get_last_response()  # wait for generation to complete
@@ -307,6 +309,21 @@ def _apply_humanized_paragraphs(
     return blocks_for_word
 
 
+_MATH_BODY_RE = re.compile(
+    r"\\[a-zA-Z]+[\{\( ]"   # \command{ or \command( or \command<space>
+    r"|_\{"                   # _{subscript}
+    r"|\^\{"                  # ^{superscript}
+    r"|\$\$"                  # $$display math$$
+    r"|\\left"                # \left(
+    r"|\\right"               # \right)
+)
+
+
+def _is_math_body(text: str) -> bool:
+    """True when a body paragraph is raw LaTeX/math and must not be humanized."""
+    return bool(_MATH_BODY_RE.search(text))
+
+
 def _humanize_for_word(text: str, project: dict, progress=None) -> list[Block]:
     if not text or not text.strip():
         return []
@@ -317,7 +334,9 @@ def _humanize_for_word(text: str, project: dict, progress=None) -> list[Block]:
 
     body_indexes = [
         index for index, block in enumerate(original_blocks)
-        if block.block_type == "body" and block.plain_text.strip()
+        if block.block_type == "body"
+        and block.plain_text.strip()
+        and not _is_math_body(block.plain_text)
     ]
     if not body_indexes:
         return original_blocks

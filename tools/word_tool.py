@@ -5,6 +5,7 @@ Parses ChatGPT's markdown output and applies the styles defined in config.json.
 
 import json
 import os
+import re
 from docx import Document
 from docx.shared import Pt, Cm, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -236,6 +237,15 @@ def _mml_to_omml_node(mml, parent):
             run(text)
 
 
+_LATEX_STRIP_RE = re.compile(
+    r"\\tag\*?\{[^}]*\}"     # \tag{11} / \tag*{11}
+    r"|\\label\{[^}]*\}"     # \label{eq:foo}
+    r"|\\notag\b"             # \notag
+    r"|\\nonumber\b",         # \nonumber
+    re.IGNORECASE,
+)
+
+
 def _latex_to_omml(latex: str):
     """
     Convert a LaTeX string to an OMML lxml element (no XSLT file needed).
@@ -247,6 +257,9 @@ def _latex_to_omml(latex: str):
         from lxml import etree
     except ImportError:
         return None
+
+    # Strip equation-numbering commands — Word doesn't use LaTeX numbering
+    latex = _LATEX_STRIP_RE.sub("", latex).strip()
 
     try:
         mathml_str = latex2mathml.converter.convert(latex)

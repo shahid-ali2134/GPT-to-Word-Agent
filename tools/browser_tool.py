@@ -282,15 +282,24 @@ def _extract_last_response(page: Page) -> str:
 
             // KaTeX display equation wrapper — extract raw LaTeX from MathML annotation
             if (cls.includes('katex-display')) {
-                const ann = node.querySelector('annotation[encoding="application/x-tex"]');
-                if (ann) return '\\n\\n$$' + ann.textContent.trim() + '$$\\n\\n';
-                return node.textContent;
+                // Try multiple selectors — KaTeX versions differ in attribute capitalisation
+                const ann = node.querySelector('annotation[encoding="application/x-tex"]')
+                         || node.querySelector('annotation[encoding]')
+                         || node.querySelector('.katex-mathml annotation')
+                         || node.querySelector('math annotation');
+                if (ann && ann.textContent.trim())
+                    return '\\n\\n$$' + ann.textContent.trim() + '$$\\n\\n';
+                // Avoid returning garbled textContent — emit blank lines instead
+                return '\\n\\n';
             }
             // KaTeX inline equation
             if (cls.includes('katex') && !cls.includes('katex-html') && !cls.includes('katex-mathml')) {
-                const ann = node.querySelector('annotation[encoding="application/x-tex"]');
-                if (ann) return '$$' + ann.textContent.trim() + '$$';
-                return node.textContent;
+                const ann = node.querySelector('annotation[encoding="application/x-tex"]')
+                         || node.querySelector('annotation[encoding]')
+                         || node.querySelector('math annotation');
+                if (ann && ann.textContent.trim())
+                    return '$$' + ann.textContent.trim() + '$$';
+                return '';  // avoid garbled textContent
             }
             // Skip already-consumed KaTeX sub-elements
             if (cls.includes('katex-html') || cls.includes('katex-mathml')) return '';
@@ -444,57 +453,158 @@ def open_new_tab(browser_name: str = "chrome") -> Page:
 
 def download_last_generated_image(save_path: str) -> bool:
     """
-    Download the image from the last ChatGPT assistant message (DALL-E generated).
-    Works with both blob: URLs and regular HTTPS URLs.
+    Download the image from the last ChatGPT assistant message.
+    Handles DALL-E (img src), Matplotlib charts (canvas or download-button click).
     Returns True on success.
     """
     global _page
     if not _page or _page.is_closed():
         return False
 
-    _page.wait_for_timeout(2_000)  # let the image fully render
+    _page.wait_for_timeout(3_000)  # let chart/image fully render
 
-    img_src = _page.evaluate("""
+    import base64 as _b64
+    os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+
+    # ── Phase 1: JS-based extraction (img tag or canvas) ─────────────────────
+    result = _page.evaluate("""
         () => {
             const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
             if (!messages.length) return null;
             const last = messages[messages.length - 1];
-            const img = last.querySelector('img[src]');
-            return img ? img.src : null;
+
+            // All img tags — skip SVG icons and unloaded images, prefer largest
+            const imgs = Array.from(last.querySelectorAll('img[src]')).filter(img => {
+                const s = img.src || '';
+                return s && !s.endsWith('.svg') && img.naturalWidth > 0 && (
+                    s.startsWith('blob:') ||
+                    s.startsWith('https://') ||
+                    s.startsWith('data:image/')
+                );
+            });
+            imgs.sort((a, b) =>
+                (b.naturalWidth * b.naturalHeight) - (a.naturalWidth * a.naturalHeight)
+            );
+            if (imgs.length) return { type: 'url', src: imgs[0].src };
+
+            // Canvas element (Matplotlib interactive chart)
+            const canvas = last.querySelector('canvas');
+            if (canvas && canvas.width > 50 && canvas.height > 50) {
+                return { type: 'canvas', data: canvas.toDataURL('image/png') };
+            }
+
+            return null;
         }
     """)
 
-    if not img_src:
-        return False
-
     try:
-        import base64 as _b64
-        os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+        if result and result.get('type') == 'url':
+            src = result['src']
+            if src.startswith("blob:"):
+                data_url = _page.evaluate("""
+                    async (url) => {
+                        const r = await fetch(url);
+                        const blob = await r.blob();
+                        return new Promise(resolve => {
+                            const fr = new FileReader();
+                            fr.onloadend = () => resolve(fr.result);
+                            fr.readAsDataURL(blob);
+                        });
+                    }
+                """, src)
+                _, b64 = data_url.split(",", 1)
+                img_bytes = _b64.b64decode(b64)
+            else:
+                response = _page.request.get(src)
+                img_bytes = response.body()
+            with open(save_path, "wb") as f:
+                f.write(img_bytes)
+            return True
 
-        if img_src.startswith("blob:"):
-            data_url = _page.evaluate("""
-                async (url) => {
-                    const r = await fetch(url);
-                    const blob = await r.blob();
-                    return new Promise(resolve => {
-                        const fr = new FileReader();
-                        fr.onloadend = () => resolve(fr.result);
-                        fr.readAsDataURL(blob);
-                    });
-                }
-            """, img_src)
-            _, b64 = data_url.split(",", 1)
+        if result and result.get('type') == 'canvas':
+            _, b64 = result['data'].split(",", 1)
             img_bytes = _b64.b64decode(b64)
-        else:
-            response = _page.request.get(img_src)
-            img_bytes = response.body()
+            with open(save_path, "wb") as f:
+                f.write(img_bytes)
+            return True
 
-        with open(save_path, "wb") as f:
-            f.write(img_bytes)
-        return True
     except Exception as exc:
-        print(f"  [Browser] Image download failed: {exc}")
-        return False
+        print(f"  [Browser] JS image extraction failed: {exc}")
+
+    # ── Phase 2: Click "Download" link → modal opens → grab img from whole page ─
+    # ChatGPT's "Download Fig. X PNG" link opens a full-screen viewer, not a
+    # file download.  After it opens, the chart is a regular <img> in the DOM.
+    try:
+        clicked = _page.evaluate("""
+            () => {
+                const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
+                if (!messages.length) return false;
+                const last = messages[messages.length - 1];
+                for (const el of last.querySelectorAll('a, button')) {
+                    if (el.textContent.toLowerCase().includes('download')) {
+                        el.click();
+                        return true;
+                    }
+                }
+                return false;
+            }
+        """)
+
+        if clicked:
+            _page.wait_for_timeout(2_500)  # let the viewer modal render
+
+            # Search the entire page for the largest loaded image
+            img_src = _page.evaluate("""
+                () => {
+                    const imgs = Array.from(document.querySelectorAll('img[src]')).filter(img => {
+                        const s = img.src || '';
+                        return s && !s.endsWith('.svg') && img.naturalWidth > 100 && (
+                            s.startsWith('blob:') ||
+                            s.startsWith('https://') ||
+                            s.startsWith('data:image/')
+                        );
+                    });
+                    imgs.sort((a, b) =>
+                        (b.naturalWidth * b.naturalHeight) - (a.naturalWidth * a.naturalHeight)
+                    );
+                    return imgs.length ? imgs[0].src : null;
+                }
+            """)
+
+            if img_src:
+                if img_src.startswith("blob:"):
+                    data_url = _page.evaluate("""
+                        async (url) => {
+                            const r = await fetch(url);
+                            const blob = await r.blob();
+                            return new Promise(resolve => {
+                                const fr = new FileReader();
+                                fr.onloadend = () => resolve(fr.result);
+                                fr.readAsDataURL(blob);
+                            });
+                        }
+                    """, img_src)
+                    _, b64 = data_url.split(",", 1)
+                    img_bytes = _b64.b64decode(b64)
+                else:
+                    img_bytes = _page.request.get(img_src).body()
+
+                with open(save_path, "wb") as f:
+                    f.write(img_bytes)
+
+                # Close the viewer modal
+                _page.keyboard.press("Escape")
+                _page.wait_for_timeout(500)
+                return True
+
+            # Couldn't find image — close modal and give up
+            _page.keyboard.press("Escape")
+            _page.wait_for_timeout(500)
+
+    except Exception as exc:
+        print(f"  [Browser] Figure viewer download failed: {exc}")
+
+    return False
 
 
 def save_browser_state():
