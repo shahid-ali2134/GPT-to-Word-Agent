@@ -388,13 +388,16 @@ def _humanize_text_sync(
     humanize_button.click()
 
     result = _wait_for_result_and_copy(page, text, timeout_sec, progress)
+    accepted = False
 
     for attempt in range(max_rehumanize):
         score = _extract_human_score(page)
         if score is None:
+            accepted = True  # score unreadable — accept humanized result
             break
         if score >= threshold:
             _report(progress, f"Human score {score}% meets threshold ({threshold}%).")
+            accepted = True
             break
         _report(
             progress,
@@ -405,8 +408,19 @@ def _humanize_text_sync(
         if new_result:
             result = new_result
         else:
-            _report(progress, "Rehumanize button not found. Using current result.")
+            _report(progress, "Rehumanize button not found. Checking final score.")
             break
+
+    if not accepted:
+        # Final score check after the last rehumanize attempt
+        final_score = _extract_human_score(page)
+        if final_score is not None and final_score < threshold:
+            _report(
+                progress,
+                f"Warning: Human score {final_score}% still below {threshold}% after "
+                f"{max_rehumanize} attempt(s). Using original text.",
+            )
+            result = text  # fall back to original — don't write low-score content
 
     save_browser_state()
     return result

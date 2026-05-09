@@ -242,13 +242,41 @@ def _count_assistant_messages(page: Page) -> int:
         return 0
 
 
-def _wait_for_generation_complete(page: Page, prev_msg_count: int = 0, timeout_sec: int = 180):
+def _get_last_assistant_text(page: Page) -> str:
+    """Return a tail-slice of the last assistant message text for change detection.
+
+    Used alongside message count so that a new response is detected even when
+    ChatGPT streams into the same DOM node (count doesn't change) or the count
+    lags behind actual rendering.
+    """
+    try:
+        return page.evaluate("""
+            () => {
+                const msgs = document.querySelectorAll('[data-message-author-role="assistant"]');
+                if (!msgs.length) return '';
+                return (msgs[msgs.length - 1].textContent || '').trim().slice(-120);
+            }
+        """) or ""
+    except Exception:
+        return ""
+
+
+def _wait_for_generation_complete(
+    page: Page,
+    prev_msg_count: int = 0,
+    timeout_sec: int = 600,
+    progress=None,
+):
     """Poll until ChatGPT stops generating (stop button disappears).
 
     prev_msg_count — number of assistant messages that existed BEFORE the
     prompt was sent.  We first wait for a new message to appear (guards
     against reading the old response when GPT responds too quickly for the
     stop-button heuristic to catch it), then wait for generation to finish.
+
+    timeout_sec is intentionally generous (default 10 min) because heavy chats
+    with long context take significantly longer to generate responses.
+    progress — optional callable(str) for status updates every ~30 s.
     """
     stop_selectors = [
         'button[data-testid="stop-button"]',
@@ -257,8 +285,9 @@ def _wait_for_generation_complete(page: Page, prev_msg_count: int = 0, timeout_s
     ]
     combined = ", ".join(stop_selectors)
 
-    # ── Phase 1: wait until a NEW assistant message node appears (up to 15 s) ──
-    new_msg_deadline = time.time() + 15
+    # ── Phase 1: wait until a NEW assistant message node appears (up to 45 s) ──
+    # Heavy chats can take 20-30 s before ChatGPT even starts streaming.
+    new_msg_deadline = time.time() + 45
     while time.time() < new_msg_deadline:
         if _count_assistant_messages(page) > prev_msg_count:
             break
@@ -270,7 +299,11 @@ def _wait_for_generation_complete(page: Page, prev_msg_count: int = 0, timeout_s
         page.wait_for_timeout(500)
 
     # ── Phase 2: wait for the stop button to disappear (generation done) ──────
-    deadline = time.time() + timeout_sec
+    phase2_start = time.time()
+    deadline = phase2_start + timeout_sec
+    last_reported = 0.0
+    REPORT_INTERVAL = 30  # seconds between progress messages
+
     while time.time() < deadline:
         visible = any(
             page.query_selector(s) is not None
@@ -278,6 +311,17 @@ def _wait_for_generation_complete(page: Page, prev_msg_count: int = 0, timeout_s
         )
         if not visible:
             break
+
+        now = time.time()
+        elapsed = int(now - phase2_start)
+        remaining = int(deadline - now)
+        if progress and elapsed >= REPORT_INTERVAL and now - last_reported >= REPORT_INTERVAL:
+            progress(
+                f"Waiting for ChatGPT to finish… "
+                f"({elapsed}s elapsed, up to {remaining}s remaining)"
+            )
+            last_reported = now
+
         page.wait_for_timeout(1_000)
 
     # Extra settle time
@@ -478,12 +522,20 @@ def _type_and_submit(page: Page, message: str) -> None:
         page.keyboard.press("Enter")
 
 
-def send_message(message: str) -> str:
+def send_message(message: str, allow_retry: bool = True, progress=None) -> str:
     """Type *message* into the current ChatGPT chat and submit it.
 
-    If no new assistant message appears after the first attempt (which can
-    happen when the page was still hydrating), the send is automatically
-    retried once after a short wait.
+    Detects a new response via TWO independent signals: assistant message count
+    AND last-message text fingerprint.  A 3-second grace period lets slow DOM
+    renders settle before concluding that no response arrived.
+
+    allow_retry — set False for image-generation requests (e.g. "Draw figure X").
+    DALL-E generation often starts silently with no immediate text node, so a
+    retry would send the same prompt a second time and confuse GPT.  With
+    allow_retry=False the function returns a Warning instead of re-sending.
+
+    progress — optional callable(str) forwarded to _wait_for_generation_complete
+    so the user sees periodic status updates for long-running generations.
     """
     global _page
     if not _page or _page.is_closed():
@@ -493,27 +545,46 @@ def send_message(message: str) -> str:
     if not el:
         return "Error: could not find ChatGPT input area."
 
+    # Snapshot BOTH signals before sending
     msg_count_before = _count_assistant_messages(_page)
+    last_text_before = _get_last_assistant_text(_page)
+
+    def _new_response() -> bool:
+        return (
+            _count_assistant_messages(_page) > msg_count_before
+            or _get_last_assistant_text(_page) != last_text_before
+        )
 
     # ── Attempt 1 ────────────────────────────────────────────────────────────
     _type_and_submit(_page, message)
     _page.wait_for_timeout(1_500)
-    _wait_for_generation_complete(_page, prev_msg_count=msg_count_before)
+    _wait_for_generation_complete(_page, prev_msg_count=msg_count_before, progress=progress)
 
-    # ── Verify a new response appeared; if not, retry once ───────────────────
-    if _count_assistant_messages(_page) <= msg_count_before:
-        print("  [Browser] No new response after first send — page may still be loading. Retrying…")
-        # Give the page more time to finish hydrating, then try again
-        _wait_for_page_ready(_page, timeout_sec=15)
-        msg_count_before = _count_assistant_messages(_page)
-        _type_and_submit(_page, message)
-        _page.wait_for_timeout(1_500)
-        _wait_for_generation_complete(_page, prev_msg_count=msg_count_before)
+    if _new_response():
+        return "Message sent; response complete."
 
-        if _count_assistant_messages(_page) <= msg_count_before:
-            return "Warning: Message sent but no new response detected after retry."
+    # ── Grace period: DOM may still be settling after generation ─────────────
+    _page.wait_for_timeout(3_000)
+    if _new_response():
+        return "Message sent; response complete."
 
-    return "Message sent; response complete."
+    if not allow_retry:
+        # Don't re-send — caller must decide what to do (e.g. proceed to download)
+        return "Warning: Message sent but no immediate response detected (retry suppressed)."
+
+    # ── True retry: re-baseline then send again ───────────────────────────────
+    print("  [Browser] No new response detected — retrying send…")
+    _wait_for_page_ready(_page, timeout_sec=15)
+    msg_count_before = _count_assistant_messages(_page)
+    last_text_before = _get_last_assistant_text(_page)
+    _type_and_submit(_page, message)
+    _page.wait_for_timeout(1_500)
+    _wait_for_generation_complete(_page, prev_msg_count=msg_count_before, progress=progress)
+
+    if _new_response():
+        return "Message sent; response complete."
+
+    return "Warning: Message sent but no new response detected after retry."
 
 
 def get_last_response() -> str:
@@ -578,7 +649,9 @@ _SCAN_FOR_IMAGE_JS = """
         const text = (last.textContent || '').toLowerCase();
         const activeKeywords = [
             'analyzing', 'creating', 'generating', 'drawing',
-            'working on', 'running', 'producing', 'rendering'
+            'working on', 'running', 'producing', 'rendering', 'one last tweak',
+            'creating image', 'sketching it out', 'adding final touches',
+            'making first draft', 'publishing details'
         ];
         if (activeKeywords.some(kw => text.includes(kw)))
             return { type: 'creating' };
@@ -588,7 +661,11 @@ _SCAN_FOR_IMAGE_JS = """
 """
 
 
-def download_last_generated_image(save_path: str) -> bool:
+def download_last_generated_image(
+    save_path: str,
+    progress=None,
+    interrupt_fn=None,
+) -> bool:
     """
     Download the image from the last ChatGPT assistant message.
     Handles DALL-E (img src), Matplotlib charts (canvas or download-button click).
@@ -600,6 +677,13 @@ def download_last_generated_image(save_path: str) -> bool:
     When "Analyzing / Creating / Generating / …" text is detected, the idle
     timer resets so the agent keeps waiting while ChatGPT is actively working.
 
+    progress     — optional callable(str) for periodic status updates.
+    interrupt_fn — optional zero-arg callable returning a command string:
+                     "skip" → abort the download and return False.
+                     "wait" → reset the idle timer and extend the hard deadline
+                              by another MAX_WAIT_SEC (user says image is coming).
+                   Any other value is ignored.
+
     Returns True on success.
     """
     global _page
@@ -610,26 +694,72 @@ def download_last_generated_image(save_path: str) -> bool:
     os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
 
     # ── Poll until image/canvas/download-button appears ───────────────────────
-    MAX_WAIT_SEC  = 300   # hard 5-minute cap
-    IDLE_TIMEOUT  = 90    # give up 90 s after the last "creating" signal
+    # Heavy chats make DALL-E take considerably longer — allow up to 10 minutes.
+    MAX_WAIT_SEC  = 600   # hard 10-minute cap per "wait" extension
+    IDLE_TIMEOUT  = 180   # give up 3 min after the last "creating" signal
+    REPORT_INTERVAL = 30  # seconds between progress messages
 
-    result      = None
-    start       = time.time()
-    last_active = time.time()  # last time we saw any signal (image OR creating)
+    result       = None
+    start        = time.time()
+    deadline     = start + MAX_WAIT_SEC
+    last_active  = time.time()
+    last_reported = 0.0
 
-    while time.time() - start < MAX_WAIT_SEC:
+    HINT = "Type **skip** to skip this figure, or **wait** to extend the timeout."
+
+    while time.time() < deadline:
         _page.wait_for_timeout(4_000)
+
+        # ── User interrupt check ──────────────────────────────────────────────
+        if interrupt_fn:
+            cmd = interrupt_fn().lower().strip()
+            if cmd == "skip":
+                print("  [Browser] Figure download skipped by user.")
+                if progress:
+                    progress("Downloading figure… skipped by user.")
+                return False
+            if cmd == "wait":
+                last_active = time.time()
+                deadline = time.time() + MAX_WAIT_SEC  # extend hard cap
+                print("  [Browser] User requested wait — resetting figure timeout.")
+                if progress:
+                    progress(
+                        f"Downloading figure… timeout extended by 10 min. {HINT}"
+                    )
+
         raw = _page.evaluate(_SCAN_FOR_IMAGE_JS)
+        now = time.time()
+        elapsed = int(now - start)
 
         if raw is None:
-            idle_for = int(time.time() - last_active)
+            idle_for = int(now - last_active)
+            idle_left = IDLE_TIMEOUT - idle_for
             if idle_for >= IDLE_TIMEOUT:
                 print("  [Browser] No image or activity detected — giving up.")
+                if progress:
+                    progress(
+                        f"Downloading figure… no activity for {IDLE_TIMEOUT}s — giving up. {HINT}"
+                    )
                 break
-            print(f"  [Browser] Waiting for image… ({IDLE_TIMEOUT - idle_for}s idle timeout)")
+            print(f"  [Browser] Waiting for image… ({idle_left}s before idle timeout)")
+            if progress and now - last_reported >= REPORT_INTERVAL:
+                progress(
+                    f"Downloading figure… waiting for ChatGPT to generate the image "
+                    f"({elapsed}s elapsed, idle timeout in {idle_left}s). {HINT}"
+                )
+                last_reported = now
+
         elif raw.get("type") == "creating":
             last_active = time.time()
             print("  [Browser] ChatGPT is still creating the figure, waiting…")
+            if progress and now - last_reported >= REPORT_INTERVAL:
+                hard_left = int(deadline - now)
+                progress(
+                    f"Downloading figure… ChatGPT is generating the image "
+                    f"({elapsed}s elapsed, up to {hard_left}s remaining). {HINT}"
+                )
+                last_reported = now
+
         else:
             result = raw
             break

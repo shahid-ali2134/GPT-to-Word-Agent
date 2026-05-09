@@ -45,11 +45,24 @@ SECTION_DONE_MARKER = "[SECTION_WORKFLOW_COMPLETE]"
 # Signature: (message: str) -> str | None   (returns user reply, or None on timeout)
 _figure_input_fn: "callable | None" = None
 
+# ── Figure interrupt function ──────────────────────────────────────────────────
+# Set by discord_bot.py before any chapter command.  Called non-blocking inside
+# the figure-download polling loop.  Returns the latest user command ("skip" /
+# "wait" / "") so the user can control a long-running DALL-E wait from Discord.
+# Signature: () -> str
+_figure_interrupt_fn: "callable | None" = None
+
 
 def configure_figure_input_fn(fn: "callable | None") -> None:
     """Register (or clear) the Discord reply function for manual figure download."""
     global _figure_input_fn
     _figure_input_fn = fn
+
+
+def configure_figure_interrupt_fn(fn: "callable | None") -> None:
+    """Register (or clear) the non-blocking interrupt function for figure downloads."""
+    global _figure_interrupt_fn
+    _figure_interrupt_fn = fn
 
 
 def _find_latest_download(max_age_sec: float = 600.0) -> "str | None":
@@ -127,14 +140,21 @@ def _resolve_figures(
         if fig_num == 0:
             continue  # malformed placeholder — no figure number detected
         report(f"Requesting figure {fig_num} from ChatGPT.")
-        send_result = send_message(f"Draw figure {fig_num} please!")
-        if send_result.startswith("Warning") or send_result.startswith("Error"):
-            report(f"Warning: Could not send figure request for figure {fig_num}: {send_result}")
+        # allow_retry=False: DALL-E generation starts silently (no immediate text
+        # response), so a retry would send the same prompt twice and confuse GPT.
+        send_result = send_message(
+            f"Draw figure {fig_num} please!", allow_retry=False, progress=progress
+        )
+        if send_result.startswith("Error"):
+            report(f"Warning: Browser error when requesting figure {fig_num} — skipping.")
             continue
+        # A "Warning: no immediate response" is expected for DALL-E — proceed to download
 
         save_path = os.path.join(figures_dir, f"fig_{fig_num:03d}.png")
         report(f"Downloading figure {fig_num}.")
-        success = download_last_generated_image(save_path)
+        success = download_last_generated_image(
+            save_path, progress=progress, interrupt_fn=_figure_interrupt_fn
+        )
 
         if success:
             new_block = Block("figure")
@@ -521,12 +541,12 @@ def write_complete_chapter(
 
     outline_prompt = build_outline_prompt(chapter_number, chapter_outline)
     report("Requesting the chapter outline from ChatGPT.")
-    send_message(outline_prompt)
+    send_message(outline_prompt, progress=progress)
     outline_response = get_last_response()
 
     intro_prompt = build_intro_prompt(chapter_number, chapter_outline)
     report("Writing the introductory paragraphs.")
-    send_message(intro_prompt)
+    send_message(intro_prompt, progress=progress)
     response = _strip_gpt_preamble(get_last_response())
     blocks_for_word = _humanize_for_word(response, project, report)
     blocks_for_word = _normalize_chapter_opening(blocks_for_word, chapter_title)
@@ -545,7 +565,7 @@ def write_complete_chapter(
             )
 
         report(f"Continuing to the next section ({written_sections + 1}).")
-        send_message(CONTINUE_PROMPT)
+        send_message(CONTINUE_PROMPT, progress=progress)
         response = _strip_gpt_preamble(get_last_response())
         blocks_for_word = _humanize_for_word(response, project, report)
         blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
@@ -600,7 +620,7 @@ def write_sections(
         raise RuntimeError(navigate_result)
 
     report("Writing the requested section outline.")
-    send_message(build_section_prompt(chapter_number, sections_outline))
+    send_message(build_section_prompt(chapter_number, sections_outline), progress=progress)
     response = _strip_gpt_preamble(get_last_response())
     response_for_word = _strip_done_marker(response)
     blocks_for_word = _humanize_for_word(response_for_word, project, report)
@@ -618,7 +638,7 @@ def write_sections(
             )
 
         report(f"Continuing requested sections ({written_responses + 1}).")
-        send_message(CONTINUE_SECTION_PROMPT)
+        send_message(CONTINUE_SECTION_PROMPT, progress=progress)
         response = _strip_gpt_preamble(get_last_response())
         response_for_word = _strip_done_marker(response)
         blocks_for_word = _humanize_for_word(response_for_word, project, report)
@@ -684,7 +704,7 @@ def finish_chapter(
             )
 
         report(f"Continuing to the next section ({written_sections + 1}).")
-        send_message(CONTINUE_PROMPT)
+        send_message(CONTINUE_PROMPT, progress=progress)
         response = _strip_gpt_preamble(get_last_response())
 
         blocks_for_word = _humanize_for_word(response, project, report)
@@ -703,7 +723,7 @@ def finish_chapter(
         # If the response was truncated mid-way we just keep continuing.
         if _response_reached_section_6(response) and not _is_response_truncated(response):
             report("Section 6 reached. Sending concluding prompt.")
-            send_message(CONCLUDE_CHAPTER_PROMPT)
+            send_message(CONCLUDE_CHAPTER_PROMPT, progress=progress)
 
             # The concluding response may itself be truncated — keep going until done.
             while True:
@@ -728,7 +748,7 @@ def finish_chapter(
                     break
 
                 report("Concluding response appears truncated — requesting continuation.")
-                send_message(CONTINUE_PROMPT)
+                send_message(CONTINUE_PROMPT, progress=progress)
 
             break
 

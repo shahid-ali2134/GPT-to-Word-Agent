@@ -22,6 +22,7 @@ import discord_bridge
 from agent_core import (
     DEFAULT_PROJECT,
     configure_figure_input_fn,
+    configure_figure_interrupt_fn,
     finish_chapter,
     humanize_with_stealthwriter,
     recover_pending,
@@ -92,6 +93,7 @@ def _make_progress_sender(interaction: discord.Interaction, loop: asyncio.Abstra
         "Recovering",
         "Humanizing",
         "Saving",
+        "Waiting",
         "OK:",
         "Warning:",
         "Error:",
@@ -142,6 +144,17 @@ def _make_figure_input_fn(interaction: discord.Interaction, loop: asyncio.Abstra
     return discord_bridge.make_input_fn(channel_id, _send, loop, timeout_sec=300.0)
 
 
+def _make_figure_interrupt_fn(interaction: discord.Interaction):
+    """Return a non-blocking callable that polls for 'skip' / 'wait' commands.
+
+    The user can type either word in the Discord channel while the agent is
+    waiting for DALL-E to finish:
+      • "skip"  → abort the current figure download, move to the next figure.
+      • "wait"  → reset the idle timer and extend the hard deadline another 10 min.
+    """
+    return discord_bridge.make_interrupt_fn(interaction.channel_id)
+
+
 @bot.tree.command(
     name="writecompletechapter",
     description="Write a full chapter from ChatGPT into the Word document.",
@@ -169,6 +182,7 @@ async def write_complete_chapter_command(
 
     progress = _make_progress_sender(interaction, loop)
     configure_figure_input_fn(_make_figure_input_fn(interaction, loop))
+    configure_figure_interrupt_fn(_make_figure_interrupt_fn(interaction))
     try:
         result = await loop.run_in_executor(
             executor,
@@ -184,6 +198,7 @@ async def write_complete_chapter_command(
         raise
     finally:
         configure_figure_input_fn(None)
+        configure_figure_interrupt_fn(None)
 
     await _send_followup(
         interaction,
@@ -224,6 +239,7 @@ async def write_sections_command(
 
     progress = _make_progress_sender(interaction, loop)
     configure_figure_input_fn(_make_figure_input_fn(interaction, loop))
+    configure_figure_interrupt_fn(_make_figure_interrupt_fn(interaction))
     try:
         result = await loop.run_in_executor(
             executor,
@@ -239,6 +255,7 @@ async def write_sections_command(
         raise
     finally:
         configure_figure_input_fn(None)
+        configure_figure_interrupt_fn(None)
 
     await _send_followup(
         interaction,
@@ -269,6 +286,7 @@ async def finish_chapter_command(
     loop = asyncio.get_running_loop()
     progress = _make_progress_sender(interaction, loop)
     configure_figure_input_fn(_make_figure_input_fn(interaction, loop))
+    configure_figure_interrupt_fn(_make_figure_interrupt_fn(interaction))
     try:
         result = await loop.run_in_executor(
             executor,
@@ -283,6 +301,7 @@ async def finish_chapter_command(
         raise
     finally:
         configure_figure_input_fn(None)
+        configure_figure_interrupt_fn(None)
 
     chapter_line = f"Chapter: {result['chapter']}\n" if result["chapter"] else ""
     await _send_followup(

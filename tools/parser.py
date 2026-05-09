@@ -193,6 +193,8 @@ def _parse_table_group(lines: List[str]) -> List[Block]:
     Lines before the first tab line become a table_caption block (written
     below the table in Word using Insert Caption style).
     Tab lines become a single 'table' block with structured row/column data.
+    Non-tab lines after the last tab row (paragraph stuck to the table with
+    no blank line) are emitted as body blocks so they are not silently dropped.
     """
     result: List[Block] = []
 
@@ -214,6 +216,13 @@ def _parse_table_group(lines: List[str]) -> List[Block]:
         block = Block(block_type="table")
         block.table_rows = rows
         result.append(block)
+
+    # Any non-tab lines after the last tab row (no blank line separator in the
+    # original text) would otherwise be silently dropped — emit them as body.
+    last_tab_idx = max((i for i, ln in enumerate(table_lines) if "\t" in ln), default=-1)
+    trailing = [ln for ln in table_lines[last_tab_idx + 1:] if ln.strip()]
+    if trailing:
+        _append_body_from_lines(result, trailing)
 
     return result
 

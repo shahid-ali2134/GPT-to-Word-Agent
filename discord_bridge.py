@@ -12,9 +12,18 @@ Flow
       b. Dispatches the Discord message (fire-and-forget into the event loop).
       c. Blocks on Queue.get() until the user replies or the timeout expires.
 4. The bot's ``on_message`` event calls ``deliver(channel_id, content)``
-   which puts the reply text into the waiting Queue.
+   which puts the reply text into the waiting Queue AND buffers it for
+   non-blocking consumers (e.g. the figure-download interrupt check).
 5. The command handler must call ``agent_core.configure_figure_input_fn(None)``
    after the executor completes (the finally block) to clean up.
+
+Non-blocking interrupt
+----------------------
+``make_interrupt_fn(channel_id)`` returns a lightweight callable that the agent
+can poll (without blocking) to detect user commands like "skip" or "wait"
+typed in the Discord channel while the agent is waiting for something.
+Messages consumed this way are removed from the buffer so they are not
+delivered twice.
 """
 
 import asyncio
@@ -23,20 +32,51 @@ from queue import Empty, Queue
 from typing import Callable, Coroutine
 
 _lock = threading.Lock()
-_waiters: dict[int, "Queue[str]"] = {}  # channel_id → reply queue
+_waiters: dict[int, "Queue[str]"] = {}   # channel_id → blocking reply queue
+_buffer:  dict[int, str] = {}            # channel_id → latest unconsumed message
 
 
 def deliver(channel_id: int, content: str) -> bool:
     """Route an incoming Discord message to a waiting agent thread.
 
-    Returns True if the message was consumed (agent was waiting), False otherwise.
+    Always stores the message in the non-blocking buffer so interrupt
+    functions can see it even when no blocking waiter is registered.
+
+    Returns True if the message was consumed by a blocking waiter.
     """
     with _lock:
+        _buffer[channel_id] = content.strip()
         q = _waiters.get(channel_id)
     if q is not None:
         q.put(content)
         return True
     return False
+
+
+def consume_interrupt(channel_id: int) -> str:
+    """Non-blocking pop of the latest buffered message for *channel_id*.
+
+    Returns the message text (stripped) or '' if nothing is pending.
+    Clears the buffer entry so the same message is not read twice.
+    """
+    with _lock:
+        return _buffer.pop(channel_id, "")
+
+
+def make_interrupt_fn(channel_id: int) -> Callable[[], str]:
+    """Return a zero-argument callable that polls for user commands.
+
+    Safe to call from any thread.  Each call returns the latest unread
+    message for the channel (or '' if none), then clears it.
+
+    Typical use — check inside a polling loop:
+        cmd = interrupt_fn()
+        if cmd == "skip":   ...
+        if cmd == "wait":   ...
+    """
+    def _check() -> str:
+        return consume_interrupt(channel_id)
+    return _check
 
 
 def _register(channel_id: int) -> "Queue[str]":
