@@ -9,7 +9,7 @@ import re
 import shutil
 import time
 
-from tools.browser_tool import download_last_generated_image, get_last_response, get_message_count, navigate_to_chat, screenshot_figure, send_message
+from tools.browser_tool import clear_figure_src_cache, download_last_generated_image, get_last_response, get_message_count, navigate_to_chat, screenshot_figure, send_message
 from tools.parser import Block, parse_inline, parse_markdown
 from tools.stealthwriter_tool import humanize_text
 from tools.word_tool import append_blocks_to_word, has_pending_blocks, recover_pending_blocks, save_pending_blocks
@@ -132,6 +132,11 @@ def _resolve_figures(
     report = progress or (lambda msg: None)
     figures_dir = os.path.join(os.path.dirname(os.path.abspath(word_file_path)), "figures")
     os.makedirs(figures_dir, exist_ok=True)
+
+    # Reset the downloaded-src exclusion set so every chapter starts fresh.
+    # This prevents the canvas panel's lingering image from being returned for
+    # a subsequent figure when the page-wide fallback is used.
+    clear_figure_src_cache()
 
     result = list(blocks)
     for i, block in enumerate(result):

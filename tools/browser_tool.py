@@ -21,6 +21,21 @@ _playwright = None
 _context: BrowserContext = None
 _page: Page = None
 
+# Track every image src that has already been successfully downloaded so the
+# broader page-wide fallback never returns a figure that was used for a previous
+# section (e.g. the old image still visible in ChatGPT's canvas side-panel).
+_downloaded_figure_srcs: set[str] = set()
+
+
+def clear_figure_src_cache() -> None:
+    """Clear the set of already-downloaded figure URLs.
+
+    Call once at the start of each chapter's figure resolution pass so the
+    exclusion list doesn't grow across chapters.
+    """
+    global _downloaded_figure_srcs
+    _downloaded_figure_srcs.clear()
+
 
 # ──────────────────────────────────────────────
 # Internals
@@ -615,10 +630,15 @@ def open_new_tab(browser_name: str = "chrome") -> Page:
 
 
 _SCAN_FOR_IMAGE_JS = """
-    (baseline) => {
+    (args) => {
+        // args: { baseline, exclude }
         // baseline: index of the first NEW message to scan (messages before this
-        // index existed before the figure request and must be ignored to avoid
-        // returning a previously generated figure).
+        //           index existed before the figure request and must be ignored).
+        // exclude:  array of src strings already downloaded — never return these
+        //           so the canvas panel's lingering old figure is not reused.
+        const baseline = (args && args.baseline) || 0;
+        const excludeSet = new Set((args && args.exclude) || []);
+
         const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
         if (!messages.length) return null;
 
@@ -632,6 +652,7 @@ _SCAN_FOR_IMAGE_JS = """
             const imgs = Array.from(msg.querySelectorAll('img[src]')).filter(img => {
                 const s = img.src || '';
                 if (!validScheme(s)) return false;
+                if (excludeSet.has(s)) return false;  // skip already-downloaded
                 // naturalWidth works even when the browser window is minimised.
                 // getBoundingClientRect is zero when minimised, so use it only as fallback.
                 return img.naturalWidth > 0 || img.getBoundingClientRect().width > 0;
@@ -649,7 +670,7 @@ _SCAN_FOR_IMAGE_JS = """
 
         // Scan newest-first, but never go before 'baseline' (messages that existed
         // before this figure was requested) or further back than 5 messages.
-        const start = Math.max(baseline || 0, Math.max(0, messages.length - 5));
+        const start = Math.max(baseline, Math.max(0, messages.length - 5));
         for (let j = messages.length - 1; j >= start; j--) {
             const msg = messages[j];
 
@@ -658,7 +679,10 @@ _SCAN_FOR_IMAGE_JS = """
             if (img) return { type: 'url', src: img.src };
 
             // Any valid img URL (even if dimensions are unreadable) → Phase 2
-            if (Array.from(msg.querySelectorAll('img[src]')).some(i => validScheme(i.src || '')))
+            if (Array.from(msg.querySelectorAll('img[src]')).some(i => {
+                const s = i.src || '';
+                return validScheme(s) && !excludeSet.has(s);
+            }))
                 return { type: 'download_btn' };
 
             // Canvas (Matplotlib)
@@ -672,6 +696,26 @@ _SCAN_FOR_IMAGE_JS = """
                     return { type: 'download_btn' };
             }
         }
+
+        // ── Broader fallback: canvas panel / side panel ───────────────────────
+        // ChatGPT's image canvas feature renders figures in a side panel that
+        // is outside [data-message-author-role] containers entirely.
+        // Search ALL img elements on the page; the naturalWidth size filter
+        // (>= 10 000 px²) reliably excludes icons and UI chrome.
+        // Exclude any src already downloaded so old figures in the canvas panel
+        // are never returned for a subsequent figure request.
+        const MIN_AREA = 10000;
+        let bestSrc = null, bestArea = 0;
+        for (const img of document.querySelectorAll('img[src]')) {
+            if (!validScheme(img.src)) continue;
+            if (excludeSet.has(img.src)) continue;  // skip already-downloaded
+            const area = img.naturalWidth * img.naturalHeight;
+            if (area >= MIN_AREA && area > bestArea) {
+                bestArea = area;
+                bestSrc = img.src;
+            }
+        }
+        if (bestSrc) return { type: 'url', src: bestSrc };
 
         // Only check "creating" keywords in the very last message so an older
         // figure in a previous message doesn't suppress the active-creation signal.
@@ -722,8 +766,11 @@ def screenshot_figure(save_path: str, baseline_msg_count: int = 0) -> bool:
     # Uses naturalWidth/naturalHeight which are available even when the browser
     # is minimised (unlike getBoundingClientRect which returns zeros).
     # Only scans messages after baseline_msg_count to avoid reusing old figures.
+    # Also excludes any src that was already downloaded this chapter.
     img_info = _page.evaluate("""
-        (baseline) => {
+        (args) => {
+            const baseline = (args && args.baseline) || 0;
+            const excludeSet = new Set((args && args.exclude) || []);
             const validScheme = s => s && !s.endsWith('.svg') && (
                 s.startsWith('blob:') || s.startsWith('https://') || s.startsWith('data:image/')
             );
@@ -733,27 +780,29 @@ def screenshot_figure(save_path: str, baseline_msg_count: int = 0) -> bool:
 
             // Primary: scan new assistant messages only (after baseline)
             const msgs = document.querySelectorAll('[data-message-author-role="assistant"]');
-            const start = Math.max(baseline || 0, Math.max(0, msgs.length - 5));
+            const start = Math.max(baseline, Math.max(0, msgs.length - 5));
             for (let j = msgs.length - 1; j >= start; j--) {
                 for (const img of msgs[j].querySelectorAll('img[src]')) {
                     if (!validScheme(img.src)) continue;
+                    if (excludeSet.has(img.src)) continue;
                     const area = imgArea(img);
                     if (area > bestArea) { bestArea = area; bestSrc = img.src; }
                 }
             }
             if (bestSrc && bestArea >= 10000) return { src: bestSrc, area: bestArea };
 
-            // Fallback: broader page search for Agent/o1 mode where figures may
-            // live outside the standard message container.
-            for (const img of document.querySelectorAll(
-                    'main img, article img, [role="main"] img')) {
+            // Fallback: search ALL images on the page so figures displayed in
+            // ChatGPT's canvas/side-panel (outside message containers) are found.
+            // Exclude already-downloaded srcs so the old canvas image is never reused.
+            for (const img of document.querySelectorAll('img[src]')) {
                 if (!validScheme(img.src)) continue;
+                if (excludeSet.has(img.src)) continue;
                 const area = imgArea(img);
                 if (area > bestArea) { bestArea = area; bestSrc = img.src; }
             }
             return (bestSrc && bestArea >= 10000) ? { src: bestSrc, area: bestArea } : null;
         }
-    """, baseline_msg_count)
+    """, {"baseline": baseline_msg_count, "exclude": list(_downloaded_figure_srcs)})
 
     if img_info:
         src = img_info["src"]
@@ -766,6 +815,7 @@ def screenshot_figure(save_path: str, baseline_msg_count: int = 0) -> bool:
                 if response.ok:
                     with open(save_path, "wb") as f:
                         f.write(response.body())
+                    _downloaded_figure_srcs.add(src)
                     print(f"  [Browser] screenshot_figure: saved via HTTPS request.")
                     return True
             except Exception as exc:
@@ -792,6 +842,7 @@ def screenshot_figure(save_path: str, baseline_msg_count: int = 0) -> bool:
                 _, b64 = data_url.split(",", 1)
                 with open(save_path, "wb") as f:
                     f.write(_b64.b64decode(b64))
+                _downloaded_figure_srcs.add(src)
                 print(f"  [Browser] screenshot_figure: saved via JS fetch.")
                 return True
         except Exception as exc:
@@ -960,7 +1011,10 @@ def download_last_generated_image(
                         f"Downloading figure… got it, waiting up to 10 more min. {HINT}"
                     )
 
-        raw = _page.evaluate(_SCAN_FOR_IMAGE_JS, baseline_msg_count)
+        raw = _page.evaluate(
+            _SCAN_FOR_IMAGE_JS,
+            {"baseline": baseline_msg_count, "exclude": list(_downloaded_figure_srcs)},
+        )
         now = time.time()
         elapsed = int(now - start)
 
@@ -1048,6 +1102,7 @@ def download_last_generated_image(
                 img_bytes = response.body()
             with open(save_path, "wb") as f:
                 f.write(img_bytes)
+            _downloaded_figure_srcs.add(src)
             return True
 
         if result.get('type') == 'canvas':
