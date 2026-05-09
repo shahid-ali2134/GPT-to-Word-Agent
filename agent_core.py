@@ -9,7 +9,7 @@ import re
 import shutil
 import time
 
-from tools.browser_tool import download_last_generated_image, get_last_response, navigate_to_chat, screenshot_figure, send_message
+from tools.browser_tool import download_last_generated_image, get_last_response, get_message_count, navigate_to_chat, screenshot_figure, send_message
 from tools.parser import Block, parse_inline, parse_markdown
 from tools.stealthwriter_tool import humanize_text
 from tools.word_tool import append_blocks_to_word, has_pending_blocks, recover_pending_blocks, save_pending_blocks
@@ -31,8 +31,8 @@ INTRO_PROMPT_TEMPLATE = (
 )
 CONTINUE_PROMPT = "continue to the next section!"
 CONCLUDE_CHAPTER_PROMPT = (
-    "Continue to the next section! As we are at the end of chapter so now "
-    "lets conclude the remaining sections! Write the main sections only!"
+    "Continue to the next section! But as we are at the end of section so lets "
+    "conclude the section properly! Only write the main sections now!"
 )
 MAX_CHAPTER_STEPS = 40
 MAX_FINISH_STEPS = 40
@@ -81,7 +81,9 @@ def _find_latest_download(max_age_sec: float = 600.0) -> "str | None":
     if time.time() - os.path.getmtime(latest) <= max_age_sec:
         return latest
     return None
-SECTION_6_RE = re.compile(r"(?m)^\s*(?:#{1,4}|[*]{1,3})?\s*\d+\.6\b")
+# Matches any section heading at position 6 or higher within a chapter:
+# 1.6, 2.7, 3.8, 10.9, 4.12, etc.
+SECTION_6_RE = re.compile(r"(?m)^\s*(?:#{1,4}|[*]{1,3})?\s*\d+\.([6-9]|\d{2,})\b")
 SECTION_PROMPT_TEMPLATE = """Write only the requested part of chapter {chapter_number}.
 
 Use this section outline exactly as the scope:
@@ -157,6 +159,11 @@ def _resolve_figures(
 def _resolve_single_figure(result, i, fig_num, figures_dir, progress, report):
     """Resolve one figure_placeholder: request → download → fallback to manual input."""
     report(f"Requesting figure {fig_num} from ChatGPT.")
+
+    # Record how many assistant messages exist RIGHT NOW so that the download
+    # functions never confuse a previously generated figure with the new one.
+    baseline = get_message_count()
+
     # allow_retry=False: DALL-E generation starts silently (no immediate text
     # response), so a retry would send the same prompt twice and confuse GPT.
     send_result = send_message(
@@ -170,7 +177,8 @@ def _resolve_single_figure(result, i, fig_num, figures_dir, progress, report):
     save_path = os.path.join(figures_dir, f"fig_{fig_num:03d}.png")
     report(f"Downloading figure {fig_num}.")
     success = download_last_generated_image(
-        save_path, progress=progress, interrupt_fn=_figure_interrupt_fn
+        save_path, progress=progress, interrupt_fn=_figure_interrupt_fn,
+        baseline_msg_count=baseline,
     )
 
     if success:
@@ -622,8 +630,15 @@ def write_complete_chapter(
                 f"Stopped after {MAX_CHAPTER_STEPS} written responses without finding Chapter Summary."
             )
 
+        # Switch to the concluding prompt once GPT has written section 6 or
+        # higher (1.6, 2.7, 3.8 …) so the chapter wraps up properly.
+        if _response_reached_section_6(response) and not _is_response_truncated(response):
+            next_prompt = CONCLUDE_CHAPTER_PROMPT
+        else:
+            next_prompt = CONTINUE_PROMPT
+
         report(f"Continuing to the next section ({written_sections + 1}).")
-        send_message(CONTINUE_PROMPT, progress=progress)
+        send_message(next_prompt, progress=progress)
         response = _strip_gpt_preamble(get_last_response())
         blocks_for_word = _humanize_for_word(response, project, report)
         blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)

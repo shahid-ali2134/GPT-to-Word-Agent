@@ -615,7 +615,10 @@ def open_new_tab(browser_name: str = "chrome") -> Page:
 
 
 _SCAN_FOR_IMAGE_JS = """
-    () => {
+    (baseline) => {
+        // baseline: index of the first NEW message to scan (messages before this
+        // index existed before the figure request and must be ignored to avoid
+        // returning a previously generated figure).
         const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
         if (!messages.length) return null;
 
@@ -629,25 +632,24 @@ _SCAN_FOR_IMAGE_JS = """
             const imgs = Array.from(msg.querySelectorAll('img[src]')).filter(img => {
                 const s = img.src || '';
                 if (!validScheme(s)) return false;
-                const box = img.getBoundingClientRect();
-                return img.naturalWidth > 0 || box.width > 0;
+                // naturalWidth works even when the browser window is minimised.
+                // getBoundingClientRect is zero when minimised, so use it only as fallback.
+                return img.naturalWidth > 0 || img.getBoundingClientRect().width > 0;
             });
             if (!imgs.length) return null;
             imgs.sort((a, b) => {
-                const aA = (a.naturalWidth || a.getBoundingClientRect().width) *
-                           (a.naturalHeight || a.getBoundingClientRect().height);
-                const bA = (b.naturalWidth || b.getBoundingClientRect().width) *
-                           (b.naturalHeight || b.getBoundingClientRect().height);
+                const aA = (a.naturalWidth * a.naturalHeight) ||
+                           (a.getBoundingClientRect().width * a.getBoundingClientRect().height);
+                const bA = (b.naturalWidth * b.naturalHeight) ||
+                           (b.getBoundingClientRect().width * b.getBoundingClientRect().height);
                 return bA - aA;
             });
             return imgs[0];
         }
 
-        // Scan the last 5 messages newest-first for an image.
-        // This handles the case where ChatGPT shows multiple variants and the user
-        // picks one, which triggers a new streaming/thinking message — making the
-        // actual figure message no longer the very last one in the DOM.
-        const start = Math.max(0, messages.length - 5);
+        // Scan newest-first, but never go before 'baseline' (messages that existed
+        // before this figure was requested) or further back than 5 messages.
+        const start = Math.max(baseline || 0, Math.max(0, messages.length - 5));
         for (let j = messages.length - 1; j >= start; j--) {
             const msg = messages[j];
 
@@ -692,17 +694,22 @@ _SCAN_FOR_IMAGE_JS = """
 _MIN_FIGURE_AREA = 10_000  # ~100×100 px — filters out icons / avatars
 
 
-def screenshot_figure(save_path: str) -> bool:
-    """Capture the largest figure image visible on screen.  Works in all
-    ChatGPT modes (including Agent/o1) where the JS scanner cannot read
-    cross-origin image URLs.
+def screenshot_figure(save_path: str, baseline_msg_count: int = 0) -> bool:
+    """Download the most recently generated figure image.
 
-    Tries three approaches in order:
-      1. Fetch blob:/data: URL via JS (original quality, same-origin only).
-      2. PIL clipboard grab after a right-click → Copy image (Windows only).
-      3. Playwright element screenshot (always works, rendered quality).
+    Works even when the browser window is minimised and produces the original
+    image file (no UI chrome, full resolution).
 
-    Returns True on success, False if no suitable image is found.
+    baseline_msg_count: number of assistant messages that existed BEFORE the
+        current figure was requested.  Images in those older messages are
+        ignored so the same figure is never returned twice.
+
+    Download order:
+      1. page.request.get(src) for HTTPS URLs — uses the browser session/cookies,
+         bypasses CORS, gives the original file, works when minimised.
+      2. JS fetch for blob: / data: URLs — same-origin, always accessible.
+      3. PIL clipboard grab after right-click → Copy image (Windows fallback).
+      4. Playwright element.screenshot() — last resort; needs visible window.
     """
     global _page
     if not _page or _page.is_closed():
@@ -711,53 +718,66 @@ def screenshot_figure(save_path: str) -> bool:
     import base64 as _b64
     os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
 
-    # ── Find the best (largest) image element across the last 5 messages ─────
-    # Also falls back to a full-page search so Agent-mode figures in non-
-    # standard containers are still found.
-    best_el = None
-    best_area = 0
+    # ── Step 1: find the best image src via JS ────────────────────────────────
+    # Uses naturalWidth/naturalHeight which are available even when the browser
+    # is minimised (unlike getBoundingClientRect which returns zeros).
+    # Only scans messages after baseline_msg_count to avoid reusing old figures.
+    img_info = _page.evaluate("""
+        (baseline) => {
+            const validScheme = s => s && !s.endsWith('.svg') && (
+                s.startsWith('blob:') || s.startsWith('https://') || s.startsWith('data:image/')
+            );
+            const imgArea = img => img.naturalWidth * img.naturalHeight;
 
-    def _find_best_img(locator) -> None:
-        nonlocal best_el, best_area
-        count = locator.count()
-        for k in range(count):
-            el = locator.nth(k)
+            let bestSrc = null, bestArea = 0;
+
+            // Primary: scan new assistant messages only (after baseline)
+            const msgs = document.querySelectorAll('[data-message-author-role="assistant"]');
+            const start = Math.max(baseline || 0, Math.max(0, msgs.length - 5));
+            for (let j = msgs.length - 1; j >= start; j--) {
+                for (const img of msgs[j].querySelectorAll('img[src]')) {
+                    if (!validScheme(img.src)) continue;
+                    const area = imgArea(img);
+                    if (area > bestArea) { bestArea = area; bestSrc = img.src; }
+                }
+            }
+            if (bestSrc && bestArea >= 10000) return { src: bestSrc, area: bestArea };
+
+            // Fallback: broader page search for Agent/o1 mode where figures may
+            // live outside the standard message container.
+            for (const img of document.querySelectorAll(
+                    'main img, article img, [role="main"] img')) {
+                if (!validScheme(img.src)) continue;
+                const area = imgArea(img);
+                if (area > bestArea) { bestArea = area; bestSrc = img.src; }
+            }
+            return (bestSrc && bestArea >= 10000) ? { src: bestSrc, area: bestArea } : null;
+        }
+    """, baseline_msg_count)
+
+    if img_info:
+        src = img_info["src"]
+        print(f"  [Browser] screenshot_figure: found image src (area={img_info['area']:.0f}).")
+
+        # ── Approach 1: page.request.get for HTTPS (browser session, no CORS) ─
+        if src.startswith("https://"):
             try:
-                box = el.bounding_box()
-                if box and box["width"] * box["height"] > best_area:
-                    best_area = box["width"] * box["height"]
-                    best_el = el
-            except Exception:
-                continue
+                response = _page.request.get(src)
+                if response.ok:
+                    with open(save_path, "wb") as f:
+                        f.write(response.body())
+                    print(f"  [Browser] screenshot_figure: saved via HTTPS request.")
+                    return True
+            except Exception as exc:
+                print(f"  [Browser] screenshot_figure HTTPS request failed: {exc}")
 
-    try:
-        # Primary: scan last 5 assistant messages (highest precision)
-        all_msgs = _page.locator('[data-message-author-role="assistant"]')
-        msg_count = all_msgs.count()
-        for idx in range(msg_count - 1, max(-1, msg_count - 6), -1):
-            _find_best_img(all_msgs.nth(idx).locator("img"))
-
-        # Fallback: full-page search in case Agent mode uses a different container
-        if best_area < _MIN_FIGURE_AREA:
-            _find_best_img(_page.locator("main img, article img, [role='main'] img"))
-
-    except Exception as exc:
-        print(f"  [Browser] screenshot_figure image search failed: {exc}")
-
-    if not best_el or best_area < _MIN_FIGURE_AREA:
-        print("  [Browser] screenshot_figure: no large enough image found.")
-        return False
-
-    # ── Approach 1: fetch blob: / data: URL directly (original quality) ───────
-    try:
-        data_url = _page.evaluate("""
-            async (el) => {
-                const src = el.src || '';
-                if (!src) return null;
-                if (src.startsWith('data:image')) return src;
-                if (src.startsWith('blob:') || src.startsWith('https://')) {
+        # ── Approach 2: JS fetch for blob:/data: URLs ─────────────────────────
+        try:
+            data_url = _page.evaluate("""
+                async (src) => {
+                    if (src.startsWith('data:image')) return src;
                     try {
-                        const r = await fetch(src, {credentials: 'include'});
+                        const r = await fetch(src);
                         if (!r.ok) return null;
                         const blob = await r.blob();
                         return new Promise(resolve => {
@@ -767,54 +787,101 @@ def screenshot_figure(save_path: str) -> bool:
                         });
                     } catch (_) { return null; }
                 }
-                return null;
-            }
-        """, best_el)
-        if data_url and isinstance(data_url, str) and "," in data_url:
-            _, b64 = data_url.split(",", 1)
-            with open(save_path, "wb") as f:
-                f.write(_b64.b64decode(b64))
-            print(f"  [Browser] screenshot_figure: saved via URL fetch to {save_path}.")
-            return True
-    except Exception as exc:
-        print(f"  [Browser] screenshot_figure URL fetch failed: {exc}")
+            """, src)
+            if data_url and isinstance(data_url, str) and "," in data_url:
+                _, b64 = data_url.split(",", 1)
+                with open(save_path, "wb") as f:
+                    f.write(_b64.b64decode(b64))
+                print(f"  [Browser] screenshot_figure: saved via JS fetch.")
+                return True
+        except Exception as exc:
+            print(f"  [Browser] screenshot_figure JS fetch failed: {exc}")
 
-    # ── Approach 2: right-click → Copy image → PIL clipboard read (Windows) ───
+    # ── Approach 3: right-click → Copy image → PIL clipboard (Windows) ────────
+    # Tries even when JS couldn't find a usable src (e.g. canvas-rendered images).
     try:
         from PIL import ImageGrab  # type: ignore
-        best_el.click(button="right")
-        _page.wait_for_timeout(600)
-        # "Copy image" is in the Chromium context menu — keyboard-navigate to it.
-        # The exact shortcut depends on locale; try sending the accelerator key
-        # that selects the Copy Image item (usually the second or third item).
-        _page.keyboard.press("ArrowDown")
-        _page.keyboard.press("ArrowDown")
-        _page.keyboard.press("Enter")
-        _page.wait_for_timeout(400)
-        img = ImageGrab.grabclipboard()
-        if img is not None:
-            img.save(save_path, "PNG")
-            print(f"  [Browser] screenshot_figure: saved via clipboard to {save_path}.")
-            return True
-        _page.keyboard.press("Escape")  # dismiss menu if copy didn't work
+        all_msgs = _page.locator('[data-message-author-role="assistant"]')
+        msg_count = all_msgs.count()
+        best_el = None
+        best_area = 0
+        for idx in range(msg_count - 1, max(baseline_msg_count - 1, msg_count - 6), -1):
+            for k in range(all_msgs.nth(idx).locator("img").count()):
+                el = all_msgs.nth(idx).locator("img").nth(k)
+                try:
+                    box = el.bounding_box()
+                    if box and box["width"] * box["height"] > best_area:
+                        best_area = box["width"] * box["height"]
+                        best_el = el
+                except Exception:
+                    continue
+        if best_el and best_area >= _MIN_FIGURE_AREA:
+            best_el.click(button="right")
+            _page.wait_for_timeout(600)
+            _page.keyboard.press("ArrowDown")
+            _page.keyboard.press("ArrowDown")
+            _page.keyboard.press("Enter")
+            _page.wait_for_timeout(400)
+            img = ImageGrab.grabclipboard()
+            if img is not None:
+                img.save(save_path, "PNG")
+                print(f"  [Browser] screenshot_figure: saved via clipboard.")
+                return True
+            _page.keyboard.press("Escape")
     except Exception as exc:
         print(f"  [Browser] screenshot_figure clipboard copy failed: {exc}")
 
-    # ── Approach 3: Playwright element screenshot (always works) ─────────────
+    # ── Approach 4: Playwright element.screenshot() — last resort ─────────────
+    # Needs visible window but captures anything including canvas/WebGL.
     try:
-        best_el.screenshot(path=save_path)
-        print(f"  [Browser] screenshot_figure: saved via element screenshot to {save_path} (area={best_area:.0f}).")
-        return True
+        all_msgs = _page.locator('[data-message-author-role="assistant"]')
+        msg_count = all_msgs.count()
+        best_el = None
+        best_area = 0
+        for idx in range(msg_count - 1, max(baseline_msg_count - 1, msg_count - 6), -1):
+            for k in range(all_msgs.nth(idx).locator("img").count()):
+                el = all_msgs.nth(idx).locator("img").nth(k)
+                try:
+                    box = el.bounding_box()
+                    if box and box["width"] * box["height"] > best_area:
+                        best_area = box["width"] * box["height"]
+                        best_el = el
+                except Exception:
+                    continue
+        if best_el and best_area >= _MIN_FIGURE_AREA:
+            best_el.screenshot(path=save_path)
+            print(f"  [Browser] screenshot_figure: saved via element screenshot (area={best_area:.0f}).")
+            return True
     except Exception as exc:
         print(f"  [Browser] screenshot_figure element screenshot failed: {exc}")
 
+    print("  [Browser] screenshot_figure: all approaches failed.")
     return False
+
+
+def get_message_count() -> int:
+    """Return the current number of assistant messages visible in the chat.
+
+    Call this BEFORE sending a figure request so that download functions can
+    ignore messages that existed before the request and avoid returning a
+    figure from a previous generation.
+    """
+    global _page
+    if not _page or _page.is_closed():
+        return 0
+    try:
+        return int(_page.evaluate(
+            "() => document.querySelectorAll('[data-message-author-role=\"assistant\"]').length"
+        ))
+    except Exception:
+        return 0
 
 
 def download_last_generated_image(
     save_path: str,
     progress=None,
     interrupt_fn=None,
+    baseline_msg_count: int = 0,
 ) -> bool:
     """
     Download the image from the last ChatGPT assistant message.
@@ -848,7 +915,7 @@ def download_last_generated_image(
     # In Agent/o1 mode the JS scanner cannot see the image through evaluate(),
     # but Playwright's element APIs can still take a pixel-perfect screenshot.
     def _try_screenshot() -> bool:
-        return screenshot_figure(save_path)
+        return screenshot_figure(save_path, baseline_msg_count=baseline_msg_count)
 
     # ── Poll until image/canvas/download-button appears ───────────────────────
     # Heavy chats make DALL-E take considerably longer — allow up to 10 minutes.
@@ -893,7 +960,7 @@ def download_last_generated_image(
                         f"Downloading figure… got it, waiting up to 10 more min. {HINT}"
                     )
 
-        raw = _page.evaluate(_SCAN_FOR_IMAGE_JS)
+        raw = _page.evaluate(_SCAN_FOR_IMAGE_JS, baseline_msg_count)
         now = time.time()
         elapsed = int(now - start)
 

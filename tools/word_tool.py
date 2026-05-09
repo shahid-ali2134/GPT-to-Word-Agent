@@ -616,15 +616,7 @@ def _update_word_fields(word_file_path: str) -> None:
             doc = word.Documents.Open(abs_path)
             opened_here = True
 
-        # Only update SEQ fields (caption numbering) — much faster than
-        # Fields.Update() which recalculates every field type in the document.
-        wdFieldSeq = 58
-        try:
-            for field in doc.Fields:
-                if field.Type == wdFieldSeq:
-                    field.Update()
-        except Exception:
-            doc.Fields.Update()  # fallback to full update
+        doc.Fields.Update()
 
         converted = _convert_pending_equations(doc)
         if converted:
