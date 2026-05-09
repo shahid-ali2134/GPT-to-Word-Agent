@@ -15,11 +15,15 @@ NON_PROSE_START_RE = re.compile(
     re.I,
 )
 _INLINE_MARKER_RE = re.compile(r"^[\*_]{1,3}|[\*_]{1,3}$")
-FIGURE_PLACEMENT_RE = re.compile(
-    r"^\s*placement\s*:.*?(?:fig\.?|figure)\s*(\d+)", re.I
-)
-FIGURE_CAPTION_RE = re.compile(
-    r"^\s*(?:fig\.?|figure)\s+(\d+)[.]\s+(.+)$", re.I
+# Finds any "Fig. X" / "Figure X" reference in free-form text
+_FIGURE_REF_RE = re.compile(r"\b(?:fig\.?|figure)\s*(\d+)\b", re.I)
+
+# Line that explicitly says where to put a figure
+_PLACEMENT_LINE_RE = re.compile(r"^\s*placement\s*:", re.I)
+
+# Line that starts with a figure label and a separator ("Fig. 11." / "Figure 11:" / "Fig 11 –")
+_FIGURE_LABEL_START_RE = re.compile(
+    r"^\s*(?:fig\.?|figure)\s+(\d+)\s*[.:\-–—]", re.I
 )
 
 
@@ -139,30 +143,85 @@ def _parse_table_group(lines: List[str]) -> List[Block]:
     return result
 
 
-def _is_figure_placement(lines: List[str]) -> bool:
-    return bool(lines and FIGURE_PLACEMENT_RE.match(lines[0]))
+def _extract_figure_number(text: str) -> int:
+    """Return the first figure number found anywhere in *text*, or 0."""
+    m = _FIGURE_REF_RE.search(text)
+    return int(m.group(1)) if m else 0
 
 
-def _parse_figure_placement(lines: List[str]) -> Block:
-    m = FIGURE_PLACEMENT_RE.match(lines[0])
-    b = Block("figure_placeholder")
-    b.figure_number = int(m.group(1))
-    return b
+def _is_figure_block(lines: List[str]) -> bool:
+    """
+    True when a group is primarily about a figure rather than prose.
+
+    Catches all common GPT formats:
+      • Placement instructions  – "Placement: Insert Fig. 11 near …"
+      • Imperative placements   – "Insert Figure 12 here." / "Add Fig. 3 below."
+      • Caption lines           – "Fig. 11. Title." / "Figure 11: Title."
+      • Figure-only short lines – a single line that IS a figure reference
+    Avoids matching inline prose that merely *mentions* a figure in passing.
+    """
+    if not lines:
+        return False
+
+    first = _strip_inline_markers(lines[0])
+
+    # Explicit placement instruction
+    if _PLACEMENT_LINE_RE.match(first):
+        return True
+
+    # Imperative: "Insert/Place/Add/Put Fig. X …"
+    if re.search(r"\b(insert|place|put|add)\b", first, re.I) and _FIGURE_REF_RE.search(first):
+        return True
+
+    # Caption / label line – starts with "Fig. X." or "Figure X:" etc.
+    if _FIGURE_LABEL_START_RE.match(first):
+        return True
+
+    # Short standalone line that is ONLY a figure reference
+    # e.g. "Fig. 11" or "Figure 11 goes here." (≤ 10 words, contains fig ref)
+    if _FIGURE_REF_RE.search(first) and len(first.split()) <= 10:
+        return True
+
+    return False
 
 
-def _is_figure_caption(lines: List[str]) -> bool:
-    return bool(lines and FIGURE_CAPTION_RE.match(_strip_inline_markers(lines[0])))
+def _parse_figure_block(lines: List[str]) -> List[Block]:
+    """
+    Convert a figure-related group into one or more blocks.
 
-
-def _parse_figure_caption(lines: List[str]) -> List[Block]:
+    • Placement line           → figure_placeholder
+    • Caption line (Fig. X.)   → figure_caption  (description lines → artifact)
+    • Anything else with a ref → artifact (drawing instructions, skip in Word)
+    """
     result: List[Block] = []
-    m = FIGURE_CAPTION_RE.match(_strip_inline_markers(lines[0]))
-    b = Block("figure_caption")
-    b.figure_number = int(m.group(1))
-    b.runs = parse_inline(lines[0].strip())
-    result.append(b)
-    if len(lines) > 1:
-        _append_artifact_from_lines(result, lines[1:])
+    first = _strip_inline_markers(lines[0])
+    fig_num = _extract_figure_number(" ".join(lines))
+
+    # ── Placement instruction ─────────────────────────────────────────────────
+    is_placement = (
+        _PLACEMENT_LINE_RE.match(first) or
+        (re.search(r"\b(insert|place|put|add)\b", first, re.I) and fig_num)
+    )
+    if is_placement:
+        b = Block("figure_placeholder")
+        b.figure_number = fig_num
+        result.append(b)
+        if len(lines) > 1:
+            _append_artifact_from_lines(result, lines[1:])
+        return result
+
+    # ── Caption line ──────────────────────────────────────────────────────────
+    if _FIGURE_LABEL_START_RE.match(first):
+        b = Block("figure_caption")
+        b.figure_number = fig_num
+        b.runs = parse_inline(lines[0].strip())
+        result.append(b)
+        if len(lines) > 1:
+            _append_artifact_from_lines(result, lines[1:])
+        return result
+
+    # ── Description / instructions (skip in Word) ─────────────────────────────
+    _append_artifact_from_lines(result, lines)
     return result
 
 
@@ -210,11 +269,8 @@ def parse_markdown(text: str) -> List[Block]:
         elif _is_display_equation(lines):
             blocks.append(_parse_display_equation(lines))
 
-        elif _is_figure_placement(lines):
-            blocks.append(_parse_figure_placement(lines))
-
-        elif _is_figure_caption(lines):
-            blocks.extend(_parse_figure_caption(lines))
+        elif _is_figure_block(lines):
+            blocks.extend(_parse_figure_block(lines))
 
         elif _is_non_prose_group(lines):
             _append_artifact_from_lines(blocks, lines)
