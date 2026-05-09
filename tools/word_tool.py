@@ -6,7 +6,7 @@ Parses ChatGPT's markdown output and applies the styles defined in config.json.
 import json
 import os
 from docx import Document
-from docx.shared import Pt, Cm
+from docx.shared import Pt, Cm, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from .parser import parse_markdown, Block, Run
@@ -24,25 +24,31 @@ ALIGN_MAP = {
 }
 
 STYLE_KEY_MAP = {
-    "chapter":    "chapter",
-    "heading2":   "heading2",
-    "heading3":   "heading3",
-    "body":       "body",
-    "list_item":  "body",
-    "artifact":   "body",
-    "table":      "body",
-    "equation":   "body",
+    "chapter":            "chapter",
+    "heading2":           "heading2",
+    "heading3":           "heading3",
+    "body":               "body",
+    "list_item":          "body",
+    "artifact":           "body",
+    "table":              "body",
+    "equation":           "body",
+    "figure":             "body",
+    "figure_caption":     "body",
+    "figure_placeholder": "body",
 }
 
 WORD_STYLE_MAP = {
-    "chapter":    "Heading 1",
-    "heading2":   "Heading 2",
-    "heading3":   "Heading 3",
-    "body":       "Normal",
-    "list_item":  "Normal",
-    "artifact":   "Normal",
-    "table":      "Normal",
-    "equation":   "Normal",
+    "chapter":            "Heading 1",
+    "heading2":           "Heading 2",
+    "heading3":           "Heading 3",
+    "body":               "Normal",
+    "list_item":          "Normal",
+    "artifact":           "Normal",
+    "table":              "Normal",
+    "equation":           "Normal",
+    "figure":             "Normal",
+    "figure_caption":     "Normal",
+    "figure_placeholder": "Normal",
 }
 
 
@@ -324,6 +330,43 @@ def _write_table_block(doc: Document, block, styles: dict):
     doc.add_paragraph()
 
 
+def _write_figure_block(doc: Document, block, styles: dict):
+    """Insert a downloaded figure image centered with a configurable max width."""
+    cfg = styles.get("body", {})
+    img_path = block.figure_image_path
+
+    if img_path and os.path.exists(img_path):
+        para = doc.add_paragraph()
+        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = para.add_run()
+        try:
+            run.add_picture(img_path, width=Cm(14))
+        except Exception:
+            run.text = f"[Figure {block.figure_number} — image load error]"
+            run.font.italic = True
+    else:
+        # No image yet — write a visible placeholder so the spot is reserved
+        para = doc.add_paragraph()
+        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = para.add_run(f"[Figure {block.figure_number}]")
+        run.font.name = cfg.get("font", "Garamond")
+        run.font.size = Pt(cfg.get("size_pt", 11))
+        run.italic = True
+
+
+def _write_figure_caption_block(doc: Document, block, styles: dict):
+    """Write a figure caption as centered body text."""
+    cfg = styles.get("body", {})
+    para = doc.add_paragraph()
+    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for run_data in block.runs:
+        run = para.add_run(run_data.text)
+        run.font.name = cfg.get("font", "Garamond")
+        run.font.size = Pt(cfg.get("size_pt", 11))
+        run.bold = run_data.bold
+        run.italic = run_data.italic
+
+
 def append_blocks_to_word(blocks: list[Block], word_file_path: str) -> str:
     """Append pre-parsed blocks to the Word document using configured styles."""
     styles = _load_styles()
@@ -339,6 +382,14 @@ def append_blocks_to_word(blocks: list[Block], word_file_path: str) -> str:
 
         if block.block_type == "equation":
             _write_equation_block(doc, block, styles)
+            continue
+
+        if block.block_type in ("figure", "figure_placeholder"):
+            _write_figure_block(doc, block, styles)
+            continue
+
+        if block.block_type == "figure_caption":
+            _write_figure_caption_block(doc, block, styles)
             continue
 
         style_key = STYLE_KEY_MAP.get(block.block_type, "body")
@@ -389,6 +440,8 @@ def _blocks_to_json(blocks: list[Block]) -> list[dict]:
             "runs": [{"text": r.text, "bold": r.bold, "italic": r.italic} for r in b.runs],
             "table_rows": b.table_rows,
             "latex": b.latex,
+            "figure_number": b.figure_number,
+            "figure_image_path": b.figure_image_path,
         }
         for b in blocks
     ]
@@ -398,9 +451,14 @@ def _blocks_from_json(data: list[dict]) -> list[Block]:
     result = []
     for entry in data:
         runs = [Run(text=r["text"], bold=r["bold"], italic=r["italic"]) for r in entry["runs"]]
-        table_rows = entry.get("table_rows", [])
-        latex = entry.get("latex", "")
-        result.append(Block(block_type=entry["block_type"], runs=runs, table_rows=table_rows, latex=latex))
+        result.append(Block(
+            block_type=entry["block_type"],
+            runs=runs,
+            table_rows=entry.get("table_rows", []),
+            latex=entry.get("latex", ""),
+            figure_number=entry.get("figure_number", 0),
+            figure_image_path=entry.get("figure_image_path", ""),
+        ))
     return result
 
 

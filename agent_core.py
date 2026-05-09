@@ -7,7 +7,7 @@ import os
 import re
 import time
 
-from tools.browser_tool import get_last_response, navigate_to_chat, send_message
+from tools.browser_tool import download_last_generated_image, get_last_response, navigate_to_chat, send_message
 from tools.parser import Block, parse_inline, parse_markdown
 from tools.stealthwriter_tool import humanize_text
 from tools.word_tool import append_blocks_to_word, has_pending_blocks, recover_pending_blocks, save_pending_blocks
@@ -68,6 +68,47 @@ _PREAMBLE_RE = re.compile(
     r"(it\s+)?seems\s+(like\s+)?there('?s|\s+is)\s+a)",
     re.I,
 )
+
+
+def _resolve_figures(
+    blocks: list[Block],
+    word_file_path: str,
+    progress=None,
+) -> list[Block]:
+    """
+    For every figure_placeholder block, send "Draw figure X please!" to ChatGPT,
+    download the generated image, and replace the placeholder with a figure block
+    that carries the local image path.  Falls back to keeping the placeholder (with
+    a visible [Figure X] marker in Word) if the download fails.
+    """
+    report = progress or (lambda msg: None)
+    figures_dir = os.path.join(os.path.dirname(os.path.abspath(word_file_path)), "figures")
+    os.makedirs(figures_dir, exist_ok=True)
+
+    result = list(blocks)
+    for i, block in enumerate(result):
+        if block.block_type != "figure_placeholder":
+            continue
+
+        fig_num = block.figure_number
+        report(f"Requesting figure {fig_num} from ChatGPT.")
+        send_message(f"Draw figure {fig_num} please!")
+        get_last_response()  # wait for generation to complete
+
+        save_path = os.path.join(figures_dir, f"fig_{fig_num:03d}.png")
+        report(f"Downloading figure {fig_num}.")
+        success = download_last_generated_image(save_path)
+
+        if success:
+            new_block = Block("figure")
+            new_block.figure_number = fig_num
+            new_block.figure_image_path = save_path
+            result[i] = new_block
+            report(f"Figure {fig_num} saved to {save_path}.")
+        else:
+            report(f"Warning: Could not download figure {fig_num}. A placeholder will appear in Word.")
+
+    return result
 
 
 WORD_SAVE_RETRIES = 6
@@ -376,6 +417,7 @@ def write_complete_chapter(
     blocks_for_word = _normalize_chapter_opening(blocks_for_word, chapter_title)
     blocks_for_word = _prepend_chapter_heading(blocks_for_word, chapter_title)
     blocks_for_word = _fix_extra_chapter_blocks(blocks_for_word)
+    blocks_for_word = _resolve_figures(blocks_for_word, word_file_path, report)
     report("Saving original headings and humanized body text to Word.")
     append_result = _append_with_retry(blocks_for_word, word_file_path, report)
     written_sections = 1
@@ -392,6 +434,7 @@ def write_complete_chapter(
         response = _strip_gpt_preamble(get_last_response())
         blocks_for_word = _humanize_for_word(response, project, report)
         blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
+        blocks_for_word = _resolve_figures(blocks_for_word, word_file_path, report)
         report("Saving original headings and humanized body text to Word.")
         append_result = _append_with_retry(blocks_for_word, word_file_path, report)
         written_sections += 1
@@ -447,6 +490,7 @@ def write_sections(
     response_for_word = _strip_done_marker(response)
     blocks_for_word = _humanize_for_word(response_for_word, project, report)
     blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
+    blocks_for_word = _resolve_figures(blocks_for_word, word_file_path, report)
     report("Saving original headings and humanized body text to Word.")
     append_result = _append_with_retry(blocks_for_word, word_file_path, report)
     written_responses = 1
@@ -464,6 +508,7 @@ def write_sections(
         response_for_word = _strip_done_marker(response)
         blocks_for_word = _humanize_for_word(response_for_word, project, report)
         blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
+        blocks_for_word = _resolve_figures(blocks_for_word, word_file_path, report)
         report("Saving original headings and humanized body text to Word.")
         append_result = _append_with_retry(blocks_for_word, word_file_path, report)
         written_responses += 1
@@ -529,6 +574,7 @@ def finish_chapter(
 
         blocks_for_word = _humanize_for_word(response, project, report)
         blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
+        blocks_for_word = _resolve_figures(blocks_for_word, word_file_path, report)
         report("Saving to Word.")
         append_result = _append_with_retry(blocks_for_word, word_file_path, report)
         written_sections += 1
@@ -544,6 +590,7 @@ def finish_chapter(
             response = _strip_gpt_preamble(get_last_response())
             blocks_for_word = _humanize_for_word(response, project, report)
             blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
+            blocks_for_word = _resolve_figures(blocks_for_word, word_file_path, report)
             report("Saving final sections to Word.")
             append_result = _append_with_retry(blocks_for_word, word_file_path, report)
             written_sections += 1

@@ -15,6 +15,12 @@ NON_PROSE_START_RE = re.compile(
     re.I,
 )
 _INLINE_MARKER_RE = re.compile(r"^[\*_]{1,3}|[\*_]{1,3}$")
+FIGURE_PLACEMENT_RE = re.compile(
+    r"^\s*placement\s*:\s*(?:insert\s+)?(?:fig\.?|figure)\s*(\d+)\s*(?:here\.?)?\s*$", re.I
+)
+FIGURE_CAPTION_RE = re.compile(
+    r"^\s*(?:fig\.?|figure)\s+(\d+)[.]\s+(.+)$", re.I
+)
 
 
 @dataclass
@@ -26,10 +32,12 @@ class Run:
 
 @dataclass
 class Block:
-    block_type: str  # 'chapter', 'heading2', 'heading3', 'body', 'list_item', 'artifact', 'table', 'equation'
+    block_type: str  # 'chapter','heading2','heading3','body','list_item','artifact','table','equation','figure_placeholder','figure_caption','figure'
     runs: List[Run] = field(default_factory=list)
     table_rows: List[List[str]] = field(default_factory=list)  # rows × cols for 'table' blocks
-    latex: str = ""  # raw LaTeX string for 'equation' blocks
+    latex: str = ""           # raw LaTeX string for 'equation' blocks
+    figure_number: int = 0    # figure number for figure_* blocks
+    figure_image_path: str = ""  # local image path for 'figure' blocks
 
     @property
     def plain_text(self) -> str:
@@ -131,6 +139,33 @@ def _parse_table_group(lines: List[str]) -> List[Block]:
     return result
 
 
+def _is_figure_placement(lines: List[str]) -> bool:
+    return bool(lines and FIGURE_PLACEMENT_RE.match(lines[0]))
+
+
+def _parse_figure_placement(lines: List[str]) -> Block:
+    m = FIGURE_PLACEMENT_RE.match(lines[0])
+    b = Block("figure_placeholder")
+    b.figure_number = int(m.group(1))
+    return b
+
+
+def _is_figure_caption(lines: List[str]) -> bool:
+    return bool(lines and FIGURE_CAPTION_RE.match(_strip_inline_markers(lines[0])))
+
+
+def _parse_figure_caption(lines: List[str]) -> List[Block]:
+    result: List[Block] = []
+    m = FIGURE_CAPTION_RE.match(_strip_inline_markers(lines[0]))
+    b = Block("figure_caption")
+    b.figure_number = int(m.group(1))
+    b.runs = parse_inline(lines[0].strip())
+    result.append(b)
+    if len(lines) > 1:
+        _append_artifact_from_lines(result, lines[1:])
+    return result
+
+
 def _is_display_equation(lines: List[str]) -> bool:
     """True when the group is a single $$latex$$ block."""
     if len(lines) == 1:
@@ -174,6 +209,12 @@ def parse_markdown(text: str) -> List[Block]:
 
         elif _is_display_equation(lines):
             blocks.append(_parse_display_equation(lines))
+
+        elif _is_figure_placement(lines):
+            blocks.append(_parse_figure_placement(lines))
+
+        elif _is_figure_caption(lines):
+            blocks.extend(_parse_figure_caption(lines))
 
         elif _is_non_prose_group(lines):
             _append_artifact_from_lines(blocks, lines)

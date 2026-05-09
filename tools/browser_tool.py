@@ -106,33 +106,89 @@ def _grant_default_permissions():
             pass
 
 
+# Selectors that are ONLY present in an active (logged-in) ChatGPT session
+_LOGGED_IN_SELECTORS = [
+    '[data-testid="profile-button"]',
+    'button[aria-label*="user menu" i]',
+    'button[aria-label*="account" i]',
+    'nav[aria-label*="history" i]',
+    'a[href="/"]>svg',          # sidebar home icon (logged-in layout)
+]
+
+# Selectors that appear on the logged-OUT / guest landing page
+_LOGIN_PAGE_SELECTORS = [
+    'button[data-testid="login-button"]',
+    'button[data-testid="sign-in-button"]',
+    'a[href*="/auth/login"]',
+    'button:has-text("Log in")',
+    'button:has-text("Sign in")',
+]
+
+
+def _chatgpt_is_logged_in(page: Page) -> bool:
+    """
+    Return True only when an active ChatGPT session is detected.
+
+    ChatGPT now shows the chat textarea to guest (logged-out) users, so
+    checking for the textarea alone is not sufficient — we must verify that
+    session-only elements are present and that no login button is visible.
+    """
+    # If a login/sign-in button is visible → definitely NOT logged in
+    for sel in _LOGIN_PAGE_SELECTORS:
+        try:
+            el = page.query_selector(sel)
+            if el and el.is_visible():
+                return False
+        except Exception:
+            pass
+
+    # If any session-only element is visible → logged in
+    for sel in _LOGGED_IN_SELECTORS:
+        try:
+            el = page.query_selector(sel)
+            if el and el.is_visible():
+                return True
+        except Exception:
+            pass
+
+    return False
+
+
 def _wait_for_login(page: Page):
     """
-    If not logged in to ChatGPT, wait for the user to log in manually.
-    Detects login by the presence of the prompt textarea.
+    Navigate to ChatGPT and wait for the user to log in if necessary.
+    Uses session-specific UI elements to distinguish logged-in from guest mode.
     """
-    page.goto("https://chatgpt.com", wait_until="domcontentloaded", timeout=30_000)
-    # Check if we're on a login screen
     try:
-        page.wait_for_selector(
-            '#prompt-textarea, div[contenteditable="true"]',
-            timeout=5_000
-        )
-        return  # Already logged in
+        page.goto("https://chatgpt.com", wait_until="domcontentloaded", timeout=30_000)
     except Exception:
-        pass
+        # Navigation interrupted by OAuth redirect — wait for it to settle
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=15_000)
+        except Exception:
+            pass
 
-    print("\n  [Browser] ChatGPT login page detected.")
+    page.wait_for_timeout(2_000)  # let JS finish rendering
+
+    if _chatgpt_is_logged_in(page):
+        return  # Already logged in
+
+    print("\n  [Browser] ChatGPT login required.")
     print("  [Browser] Please log in to ChatGPT in the browser window that just opened.")
-    print("  [Browser] Waiting for you to finish logging in...")
+    print("  [Browser] Waiting for you to finish logging in (up to 3 minutes)...")
 
-    # Wait up to 3 minutes for the user to log in
-    page.wait_for_selector(
-        '#prompt-textarea, div[contenteditable="true"]',
-        timeout=180_000
+    deadline = time.time() + 180
+    while time.time() < deadline:
+        page.wait_for_timeout(2_000)
+        if _chatgpt_is_logged_in(page):
+            print("  [Browser] Login detected! Saving browser state...")
+            _save_state()
+            return
+
+    raise RuntimeError(
+        "Login timeout — no active ChatGPT session detected after 3 minutes. "
+        "Please run the command again and log in promptly."
     )
-    print("  [Browser] Login detected! Saving browser state...")
-    _save_state()
 
 
 def _find_textarea(page: Page):
@@ -304,7 +360,13 @@ def navigate_to_chat(chat_url: str, browser_name: str = "chrome") -> str:
     if "chatgpt.com" not in (page.url or ""):
         _wait_for_login(page)
 
-    page.goto(chat_url, wait_until="domcontentloaded", timeout=30_000)
+    try:
+        page.goto(chat_url, wait_until="domcontentloaded", timeout=30_000)
+    except Exception:
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=15_000)
+        except Exception:
+            pass
     page.wait_for_timeout(2_000)
 
     # Verify the page loaded (look for textarea)
@@ -378,6 +440,61 @@ def open_new_tab(browser_name: str = "chrome") -> Page:
         "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
     )
     return page
+
+
+def download_last_generated_image(save_path: str) -> bool:
+    """
+    Download the image from the last ChatGPT assistant message (DALL-E generated).
+    Works with both blob: URLs and regular HTTPS URLs.
+    Returns True on success.
+    """
+    global _page
+    if not _page or _page.is_closed():
+        return False
+
+    _page.wait_for_timeout(2_000)  # let the image fully render
+
+    img_src = _page.evaluate("""
+        () => {
+            const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
+            if (!messages.length) return null;
+            const last = messages[messages.length - 1];
+            const img = last.querySelector('img[src]');
+            return img ? img.src : null;
+        }
+    """)
+
+    if not img_src:
+        return False
+
+    try:
+        import base64 as _b64
+        os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+
+        if img_src.startswith("blob:"):
+            data_url = _page.evaluate("""
+                async (url) => {
+                    const r = await fetch(url);
+                    const blob = await r.blob();
+                    return new Promise(resolve => {
+                        const fr = new FileReader();
+                        fr.onloadend = () => resolve(fr.result);
+                        fr.readAsDataURL(blob);
+                    });
+                }
+            """, img_src)
+            _, b64 = data_url.split(",", 1)
+            img_bytes = _b64.b64decode(b64)
+        else:
+            response = _page.request.get(img_src)
+            img_bytes = response.body()
+
+        with open(save_path, "wb") as f:
+            f.write(img_bytes)
+        return True
+    except Exception as exc:
+        print(f"  [Browser] Image download failed: {exc}")
+        return False
 
 
 def save_browser_state():
