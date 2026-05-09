@@ -553,35 +553,56 @@ def _convert_pending_equations(word_doc) -> int:
     return converted
 
 
+# Persistent Word COM instance — kept alive between calls so we don't pay the
+# launch/quit overhead on every section write.
+_word_app = None
+
+
+def _get_word_app():
+    """Return a live Word.Application COM object, reusing the cached one if possible."""
+    global _word_app
+    if _word_app is not None:
+        try:
+            _ = _word_app.Version  # lightweight ping — raises if Word has gone away
+            return _word_app
+        except Exception:
+            _word_app = None
+
+    try:
+        import win32com.client  # noqa: PLC0415
+    except ImportError:
+        return None
+
+    try:
+        _word_app = win32com.client.GetActiveObject("Word.Application")
+    except Exception:
+        try:
+            _word_app = win32com.client.Dispatch("Word.Application")
+            _word_app.Visible = False
+        except Exception:
+            return None
+    return _word_app
+
+
 def _update_word_fields(word_file_path: str) -> None:
     """Recalculate all SEQ / caption fields and convert PENDING_EQ equation
     markers to real Word equation objects via COM automation.
 
     python-docx writes SEQ fields with a cached placeholder of "1" and writes
     PENDING_EQ: markers for equations that need Word's OMaths.Add().
-    This function opens (or reuses) the live Word instance, fixes both, and
-    saves.  Silently no-ops when pywin32 or Word is unavailable.
+    Reuses a persistent Word instance so the launch/quit overhead is paid only
+    once per session rather than once per section.
     """
-    try:
-        import win32com.client  # noqa: PLC0415
-    except ImportError:
-        return  # pywin32 not installed
+    global _word_app
+    word = _get_word_app()
+    if word is None:
+        return
 
     abs_path = os.path.abspath(word_file_path)
-    word = None
-    word_was_running = True
     opened_here = False
 
     try:
-        # Prefer an already-running Word instance to avoid spawning extras
-        try:
-            word = win32com.client.GetActiveObject("Word.Application")
-        except Exception:
-            word = win32com.client.Dispatch("Word.Application")
-            word_was_running = False
-            word.Visible = False
-
-        # Check whether this document is already open in Word
+        # Reuse the document if it is already open in Word
         doc = None
         try:
             for d in word.Documents:
@@ -595,7 +616,15 @@ def _update_word_fields(word_file_path: str) -> None:
             doc = word.Documents.Open(abs_path)
             opened_here = True
 
-        doc.Fields.Update()
+        # Only update SEQ fields (caption numbering) — much faster than
+        # Fields.Update() which recalculates every field type in the document.
+        wdFieldSeq = 58
+        try:
+            for field in doc.Fields:
+                if field.Type == wdFieldSeq:
+                    field.Update()
+        except Exception:
+            doc.Fields.Update()  # fallback to full update
 
         converted = _convert_pending_equations(doc)
         if converted:
@@ -603,17 +632,15 @@ def _update_word_fields(word_file_path: str) -> None:
 
         doc.Save()
 
+        # Keep the document open so the next call can reuse it without reopening.
+        # Only close it if we opened it AND it wasn't already open (to avoid
+        # leaving stale handles on documents the user didn't have open).
         if opened_here:
             doc.Close(SaveChanges=False)
 
     except Exception as exc:
         print(f"  [Word] COM update skipped: {exc}")
-    finally:
-        if word is not None and not word_was_running:
-            try:
-                word.Quit()
-            except Exception:
-                pass
+        _word_app = None  # reset so next call gets a fresh instance
 
 
 def append_blocks_to_word(blocks: list[Block], word_file_path: str) -> str:
@@ -693,7 +720,15 @@ def append_blocks_to_word(blocks: list[Block], word_file_path: str) -> str:
         _write_word_caption(doc, "Table", pending_table_caption.plain_text)
 
     doc.save(word_file_path)
-    _update_word_fields(word_file_path)
+
+    # COM automation (field update + equation conversion) is expensive — only
+    # run it when the written blocks actually contain content that needs it:
+    # figures/tables produce SEQ caption fields; equations may produce PENDING_EQ
+    # markers.  Plain body/heading sections never need COM and are skipped.
+    _COM_TYPES = {"figure", "figure_caption", "table", "table_caption", "equation"}
+    if any(b.block_type in _COM_TYPES for b in blocks):
+        _update_word_fields(word_file_path)
+
     return f"OK: wrote {len(blocks)} block(s) to '{word_file_path}'"
 
 

@@ -77,7 +77,18 @@ bot = WordAgentBot()
 
 async def _send_followup(interaction: discord.Interaction, text: str):
     for chunk in _split(text):
-        await interaction.followup.send(chunk)
+        try:
+            await interaction.followup.send(chunk)
+        except discord.HTTPException as exc:
+            if exc.code == 50027:
+                # Webhook token expired (interactions are only valid 15 min).
+                # Fall back to a plain channel message so nothing is lost.
+                try:
+                    await interaction.channel.send(chunk)
+                except Exception:
+                    pass
+            else:
+                raise
 
 
 def _make_progress_sender(interaction: discord.Interaction, loop: asyncio.AbstractEventLoop):
@@ -184,15 +195,16 @@ async def write_complete_chapter_command(
     configure_figure_input_fn(_make_figure_input_fn(interaction, loop))
     configure_figure_interrupt_fn(_make_figure_interrupt_fn(interaction))
     try:
-        result = await loop.run_in_executor(
-            executor,
-            lambda: write_complete_chapter(
-                project_name=project,
-                chapter_number=write_chapter_number,
-                chapter_outline=chapter_outline,
-                progress=progress,
-            ),
-        )
+        async with interaction.channel.typing():
+            result = await loop.run_in_executor(
+                executor,
+                lambda: write_complete_chapter(
+                    project_name=project,
+                    chapter_number=write_chapter_number,
+                    chapter_outline=chapter_outline,
+                    progress=progress,
+                ),
+            )
     except Exception as exc:
         await _send_followup(interaction, f"Error: {exc}")
         raise
@@ -241,15 +253,16 @@ async def write_sections_command(
     configure_figure_input_fn(_make_figure_input_fn(interaction, loop))
     configure_figure_interrupt_fn(_make_figure_interrupt_fn(interaction))
     try:
-        result = await loop.run_in_executor(
-            executor,
-            lambda: write_sections(
-                project_name=project,
-                chapter_number=write_chapter_number,
-                sections_outline=sections_outline,
-                progress=progress,
-            ),
-        )
+        async with interaction.channel.typing():
+            result = await loop.run_in_executor(
+                executor,
+                lambda: write_sections(
+                    project_name=project,
+                    chapter_number=write_chapter_number,
+                    sections_outline=sections_outline,
+                    progress=progress,
+                ),
+            )
     except Exception as exc:
         await _send_followup(interaction, f"Error: {exc}")
         raise
@@ -288,14 +301,15 @@ async def finish_chapter_command(
     configure_figure_input_fn(_make_figure_input_fn(interaction, loop))
     configure_figure_interrupt_fn(_make_figure_interrupt_fn(interaction))
     try:
-        result = await loop.run_in_executor(
-            executor,
-            lambda: finish_chapter(
-                project_name=project,
-                chapter_number=chapter_number,
-                progress=progress,
-            ),
-        )
+        async with interaction.channel.typing():
+            result = await loop.run_in_executor(
+                executor,
+                lambda: finish_chapter(
+                    project_name=project,
+                    chapter_number=chapter_number,
+                    progress=progress,
+                ),
+            )
     except Exception as exc:
         await _send_followup(interaction, f"Error: {exc}")
         raise

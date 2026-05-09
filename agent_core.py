@@ -9,7 +9,7 @@ import re
 import shutil
 import time
 
-from tools.browser_tool import download_last_generated_image, get_last_response, navigate_to_chat, send_message
+from tools.browser_tool import download_last_generated_image, get_last_response, navigate_to_chat, screenshot_figure, send_message
 from tools.parser import Block, parse_inline, parse_markdown
 from tools.stealthwriter_tool import humanize_text
 from tools.word_tool import append_blocks_to_word, has_pending_blocks, recover_pending_blocks, save_pending_blocks
@@ -139,78 +139,136 @@ def _resolve_figures(
         fig_num = block.figure_number
         if fig_num == 0:
             continue  # malformed placeholder — no figure number detected
-        report(f"Requesting figure {fig_num} from ChatGPT.")
-        # allow_retry=False: DALL-E generation starts silently (no immediate text
-        # response), so a retry would send the same prompt twice and confuse GPT.
-        send_result = send_message(
-            f"Draw figure {fig_num} please!", allow_retry=False, progress=progress
-        )
-        if send_result.startswith("Error"):
-            report(f"Warning: Browser error when requesting figure {fig_num} — skipping.")
-            continue
-        # A "Warning: no immediate response" is expected for DALL-E — proceed to download
 
-        save_path = os.path.join(figures_dir, f"fig_{fig_num:03d}.png")
-        report(f"Downloading figure {fig_num}.")
-        success = download_last_generated_image(
-            save_path, progress=progress, interrupt_fn=_figure_interrupt_fn
-        )
-
-        if success:
-            new_block = Block("figure")
-            new_block.figure_number = fig_num
-            new_block.figure_image_path = save_path
-            result[i] = new_block
-            report(f"Figure {fig_num} saved to {save_path}.")
-        else:
-            # ── Ask the user for manual help via Discord ───────────────────────
-            if _figure_input_fn:
-                notify = (
-                    f"⚠️ **Could not auto-download Figure {fig_num}.**\n"
-                    f"The share modal should be open in the browser — please click **Download**.\n"
-                    f"• Reply **`done`** once the file is saved to your Downloads folder.\n"
-                    f"• Reply **`wait`** if the figure is still being created.\n"
-                    f"• Reply **`skip`** to insert a placeholder and move on.\n"
-                    f"_(Waiting up to 5 minutes)_"
-                )
-                # Loop so the user can reply "wait" multiple times
-                while True:
-                    reply = _figure_input_fn(notify)
-                    if reply is None:
-                        report(f"Warning: No reply received for Figure {fig_num}. Using placeholder.")
-                        break
-                    reply_lower = reply.strip().lower()
-                    if reply_lower in ("wait", "w"):
-                        notify = (
-                            f"⏳ Got it — still waiting for **Figure {fig_num}**.\n"
-                            f"Reply **`done`** when downloaded, **`wait`** to keep waiting, "
-                            f"or **`skip`** to use a placeholder."
-                        )
-                        continue
-                    if reply_lower in ("skip", "no", "n", "s"):
-                        report(f"Warning: Figure {fig_num} skipped by user. A placeholder will appear in Word.")
-                        break
-                    # Any other reply ("done", "ok", …) → try to grab from Downloads
-                    downloaded = _find_latest_download()
-                    if downloaded:
-                        shutil.copy2(downloaded, save_path)
-                        new_block = Block("figure")
-                        new_block.figure_number = fig_num
-                        new_block.figure_image_path = save_path
-                        result[i] = new_block
-                        report(f"Figure {fig_num}: grabbed '{os.path.basename(downloaded)}' from Downloads.")
-                        success = True
-                    else:
-                        report(
-                            f"Warning: Figure {fig_num} — could not find a recent file in Downloads. "
-                            "A placeholder will appear in Word."
-                        )
-                    break
-
-            if not success:
-                report(f"Warning: Could not download figure {fig_num}. A placeholder will appear in Word.")
+        # Wrap the entire per-figure attempt so that any unexpected exception
+        # (Playwright crash, screenshot error, etc.) leaves the surrounding
+        # section text intact — the placeholder stays and the section is written.
+        try:
+            _resolve_single_figure(result, i, fig_num, figures_dir, progress, report)
+        except Exception as exc:
+            report(
+                f"Warning: Figure {fig_num} resolution raised an unexpected error "
+                f"({exc}). Section text will still be written; placeholder used."
+            )
 
     return result
+
+
+def _resolve_single_figure(result, i, fig_num, figures_dir, progress, report):
+    """Resolve one figure_placeholder: request → download → fallback to manual input."""
+    report(f"Requesting figure {fig_num} from ChatGPT.")
+    # allow_retry=False: DALL-E generation starts silently (no immediate text
+    # response), so a retry would send the same prompt twice and confuse GPT.
+    send_result = send_message(
+        f"Draw figure {fig_num} please!", allow_retry=False, progress=progress
+    )
+    if send_result.startswith("Error"):
+        report(f"Warning: Browser error when requesting figure {fig_num} — skipping.")
+        return
+    # A "Warning: no immediate response" is expected for DALL-E — proceed to download
+
+    save_path = os.path.join(figures_dir, f"fig_{fig_num:03d}.png")
+    report(f"Downloading figure {fig_num}.")
+    success = download_last_generated_image(
+        save_path, progress=progress, interrupt_fn=_figure_interrupt_fn
+    )
+
+    if success:
+        new_block = Block("figure")
+        new_block.figure_number = fig_num
+        new_block.figure_image_path = save_path
+        result[i] = new_block
+        report(f"Figure {fig_num} saved to {save_path}.")
+        return
+
+    # success is None → user typed "skip" as an interrupt; honour it immediately
+    # without prompting again.  success is False → download failed on its own,
+    # so offer the manual fallback.
+    if success is None:
+        report(f"Warning: Figure {fig_num} skipped by user. A placeholder will appear in Word.")
+        return
+
+    # ── Ask the user for manual help via Discord ──────────────────────────────
+    # This prompt only appears after all automatic attempts have failed
+    # (idle timeout + final Phase 3 screenshot) so normal operation is hands-free.
+    if _figure_input_fn:
+        notify = (
+            f"⚠️ **Could not auto-download Figure {fig_num}.**\n"
+            f"• Reply **`retry`** to check the screen again right now.\n"
+            f"• Reply **`done`** once you have saved the file to your Downloads folder.\n"
+            f"• Reply **`wait`** to pause 30 s then retry automatically.\n"
+            f"• Reply **`skip`** to insert a placeholder and move on.\n"
+            f"_(Waiting up to 5 minutes for your reply)_"
+        )
+        while True:
+            reply = _figure_input_fn(notify)
+            if reply is None:
+                report(f"Warning: No reply received for Figure {fig_num}. Using placeholder.")
+                break
+            reply_lower = reply.strip().lower()
+
+            if reply_lower in ("retry", "r"):
+                report(f"Retrying screenshot capture for Figure {fig_num}...")
+                if screenshot_figure(save_path):
+                    new_block = Block("figure")
+                    new_block.figure_number = fig_num
+                    new_block.figure_image_path = save_path
+                    result[i] = new_block
+                    report(f"Figure {fig_num} captured via retry screenshot.")
+                    success = True
+                    break
+                notify = (
+                    f"📷 Screenshot retry for **Figure {fig_num}** found nothing yet.\n"
+                    f"• **`retry`** — check screen again\n"
+                    f"• **`wait`** — pause 30 s then retry automatically\n"
+                    f"• **`done`** — file is in Downloads\n"
+                    f"• **`skip`** — use placeholder"
+                )
+                continue
+
+            if reply_lower in ("wait", "w"):
+                report(f"Waiting 30s then retrying screenshot for Figure {fig_num}...")
+                time.sleep(30)
+                if screenshot_figure(save_path):
+                    new_block = Block("figure")
+                    new_block.figure_number = fig_num
+                    new_block.figure_image_path = save_path
+                    result[i] = new_block
+                    report(f"Figure {fig_num} captured after wait.")
+                    success = True
+                    break
+                notify = (
+                    f"⏳ Still no figure detected for **Figure {fig_num}**.\n"
+                    f"• **`retry`** — check screen again\n"
+                    f"• **`wait`** — pause another 30 s\n"
+                    f"• **`done`** — file is in Downloads\n"
+                    f"• **`skip`** — use placeholder"
+                )
+                continue
+
+            if reply_lower in ("skip", "no", "n", "s"):
+                report(f"Warning: Figure {fig_num} skipped by user. A placeholder will appear in Word.")
+                break
+
+            # Any other reply ("done", "ok", …) → try to grab from Downloads
+            downloaded = _find_latest_download()
+            if downloaded:
+                shutil.copy2(downloaded, save_path)
+                new_block = Block("figure")
+                new_block.figure_number = fig_num
+                new_block.figure_image_path = save_path
+                result[i] = new_block
+                report(f"Figure {fig_num}: grabbed '{os.path.basename(downloaded)}' from Downloads.")
+                success = True
+            else:
+                report(
+                    f"Warning: Figure {fig_num} — could not find a recent file in Downloads. "
+                    "A placeholder will appear in Word."
+                )
+            break
+
+    if not success:  # False = download failed; None already handled above
+        report(f"Warning: Could not download figure {fig_num}. A placeholder will appear in Word.")
 
 
 WORD_SAVE_RETRIES = 6

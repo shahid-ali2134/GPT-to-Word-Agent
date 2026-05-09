@@ -618,34 +618,62 @@ _SCAN_FOR_IMAGE_JS = """
     () => {
         const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
         if (!messages.length) return null;
-        const last = messages[messages.length - 1];
 
-        // Largest loaded img (DALL-E or Matplotlib CDN image)
-        const imgs = Array.from(last.querySelectorAll('img[src]')).filter(img => {
-            const s = img.src || '';
-            return s && !s.endsWith('.svg') && img.naturalWidth > 0 && (
-                s.startsWith('blob:') ||
-                s.startsWith('https://') ||
-                s.startsWith('data:image/')
-            );
-        });
-        imgs.sort((a, b) =>
-            (b.naturalWidth * b.naturalHeight) - (a.naturalWidth * a.naturalHeight)
+        const validScheme = s => s && !s.endsWith('.svg') && (
+            s.startsWith('blob:') ||
+            s.startsWith('https://') ||
+            s.startsWith('data:image/')
         );
-        if (imgs.length) return { type: 'url', src: imgs[0].src };
 
-        // Canvas element (Matplotlib interactive chart)
-        const canvas = last.querySelector('canvas');
-        if (canvas && canvas.width > 50 && canvas.height > 50)
-            return { type: 'canvas', data: canvas.toDataURL('image/png') };
-
-        // Download link/button visible → image rendered, ready for Phase 2
-        for (const el of last.querySelectorAll('a, button')) {
-            if ((el.textContent || '').toLowerCase().includes('download'))
-                return { type: 'download_btn' };
+        function largestImg(msg) {
+            const imgs = Array.from(msg.querySelectorAll('img[src]')).filter(img => {
+                const s = img.src || '';
+                if (!validScheme(s)) return false;
+                const box = img.getBoundingClientRect();
+                return img.naturalWidth > 0 || box.width > 0;
+            });
+            if (!imgs.length) return null;
+            imgs.sort((a, b) => {
+                const aA = (a.naturalWidth || a.getBoundingClientRect().width) *
+                           (a.naturalHeight || a.getBoundingClientRect().height);
+                const bA = (b.naturalWidth || b.getBoundingClientRect().width) *
+                           (b.naturalHeight || b.getBoundingClientRect().height);
+                return bA - aA;
+            });
+            return imgs[0];
         }
 
-        // ChatGPT is still actively creating the image — extend the wait
+        // Scan the last 5 messages newest-first for an image.
+        // This handles the case where ChatGPT shows multiple variants and the user
+        // picks one, which triggers a new streaming/thinking message — making the
+        // actual figure message no longer the very last one in the DOM.
+        const start = Math.max(0, messages.length - 5);
+        for (let j = messages.length - 1; j >= start; j--) {
+            const msg = messages[j];
+
+            // Largest rendered img
+            const img = largestImg(msg);
+            if (img) return { type: 'url', src: img.src };
+
+            // Any valid img URL (even if dimensions are unreadable) → Phase 2
+            if (Array.from(msg.querySelectorAll('img[src]')).some(i => validScheme(i.src || '')))
+                return { type: 'download_btn' };
+
+            // Canvas (Matplotlib)
+            const canvas = msg.querySelector('canvas');
+            if (canvas && canvas.width > 50 && canvas.height > 50)
+                return { type: 'canvas', data: canvas.toDataURL('image/png') };
+
+            // Explicit download button
+            for (const el of msg.querySelectorAll('a, button')) {
+                if ((el.textContent || '').toLowerCase().includes('download'))
+                    return { type: 'download_btn' };
+            }
+        }
+
+        // Only check "creating" keywords in the very last message so an older
+        // figure in a previous message doesn't suppress the active-creation signal.
+        const last = messages[messages.length - 1];
         const text = (last.textContent || '').toLowerCase();
         const activeKeywords = [
             'analyzing', 'creating', 'generating', 'drawing',
@@ -659,6 +687,128 @@ _SCAN_FOR_IMAGE_JS = """
         return null;
     }
 """
+
+
+_MIN_FIGURE_AREA = 10_000  # ~100×100 px — filters out icons / avatars
+
+
+def screenshot_figure(save_path: str) -> bool:
+    """Capture the largest figure image visible on screen.  Works in all
+    ChatGPT modes (including Agent/o1) where the JS scanner cannot read
+    cross-origin image URLs.
+
+    Tries three approaches in order:
+      1. Fetch blob:/data: URL via JS (original quality, same-origin only).
+      2. PIL clipboard grab after a right-click → Copy image (Windows only).
+      3. Playwright element screenshot (always works, rendered quality).
+
+    Returns True on success, False if no suitable image is found.
+    """
+    global _page
+    if not _page or _page.is_closed():
+        return False
+
+    import base64 as _b64
+    os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+
+    # ── Find the best (largest) image element across the last 5 messages ─────
+    # Also falls back to a full-page search so Agent-mode figures in non-
+    # standard containers are still found.
+    best_el = None
+    best_area = 0
+
+    def _find_best_img(locator) -> None:
+        nonlocal best_el, best_area
+        count = locator.count()
+        for k in range(count):
+            el = locator.nth(k)
+            try:
+                box = el.bounding_box()
+                if box and box["width"] * box["height"] > best_area:
+                    best_area = box["width"] * box["height"]
+                    best_el = el
+            except Exception:
+                continue
+
+    try:
+        # Primary: scan last 5 assistant messages (highest precision)
+        all_msgs = _page.locator('[data-message-author-role="assistant"]')
+        msg_count = all_msgs.count()
+        for idx in range(msg_count - 1, max(-1, msg_count - 6), -1):
+            _find_best_img(all_msgs.nth(idx).locator("img"))
+
+        # Fallback: full-page search in case Agent mode uses a different container
+        if best_area < _MIN_FIGURE_AREA:
+            _find_best_img(_page.locator("main img, article img, [role='main'] img"))
+
+    except Exception as exc:
+        print(f"  [Browser] screenshot_figure image search failed: {exc}")
+
+    if not best_el or best_area < _MIN_FIGURE_AREA:
+        print("  [Browser] screenshot_figure: no large enough image found.")
+        return False
+
+    # ── Approach 1: fetch blob: / data: URL directly (original quality) ───────
+    try:
+        data_url = _page.evaluate("""
+            async (el) => {
+                const src = el.src || '';
+                if (!src) return null;
+                if (src.startsWith('data:image')) return src;
+                if (src.startsWith('blob:') || src.startsWith('https://')) {
+                    try {
+                        const r = await fetch(src, {credentials: 'include'});
+                        if (!r.ok) return null;
+                        const blob = await r.blob();
+                        return new Promise(resolve => {
+                            const fr = new FileReader();
+                            fr.onloadend = () => resolve(fr.result);
+                            fr.readAsDataURL(blob);
+                        });
+                    } catch (_) { return null; }
+                }
+                return null;
+            }
+        """, best_el)
+        if data_url and isinstance(data_url, str) and "," in data_url:
+            _, b64 = data_url.split(",", 1)
+            with open(save_path, "wb") as f:
+                f.write(_b64.b64decode(b64))
+            print(f"  [Browser] screenshot_figure: saved via URL fetch to {save_path}.")
+            return True
+    except Exception as exc:
+        print(f"  [Browser] screenshot_figure URL fetch failed: {exc}")
+
+    # ── Approach 2: right-click → Copy image → PIL clipboard read (Windows) ───
+    try:
+        from PIL import ImageGrab  # type: ignore
+        best_el.click(button="right")
+        _page.wait_for_timeout(600)
+        # "Copy image" is in the Chromium context menu — keyboard-navigate to it.
+        # The exact shortcut depends on locale; try sending the accelerator key
+        # that selects the Copy Image item (usually the second or third item).
+        _page.keyboard.press("ArrowDown")
+        _page.keyboard.press("ArrowDown")
+        _page.keyboard.press("Enter")
+        _page.wait_for_timeout(400)
+        img = ImageGrab.grabclipboard()
+        if img is not None:
+            img.save(save_path, "PNG")
+            print(f"  [Browser] screenshot_figure: saved via clipboard to {save_path}.")
+            return True
+        _page.keyboard.press("Escape")  # dismiss menu if copy didn't work
+    except Exception as exc:
+        print(f"  [Browser] screenshot_figure clipboard copy failed: {exc}")
+
+    # ── Approach 3: Playwright element screenshot (always works) ─────────────
+    try:
+        best_el.screenshot(path=save_path)
+        print(f"  [Browser] screenshot_figure: saved via element screenshot to {save_path} (area={best_area:.0f}).")
+        return True
+    except Exception as exc:
+        print(f"  [Browser] screenshot_figure element screenshot failed: {exc}")
+
+    return False
 
 
 def download_last_generated_image(
@@ -684,7 +834,7 @@ def download_last_generated_image(
                               by another MAX_WAIT_SEC (user says image is coming).
                    Any other value is ignored.
 
-    Returns True on success.
+    Returns True on success, None if the user explicitly skipped.
     """
     global _page
     if not _page or _page.is_closed():
@@ -693,17 +843,31 @@ def download_last_generated_image(
     import base64 as _b64
     os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
 
+    # ── Phase 3 helper — element screenshot (works in any ChatGPT mode) ──────
+    # Defined early so it can be called both periodically and on timeout.
+    # In Agent/o1 mode the JS scanner cannot see the image through evaluate(),
+    # but Playwright's element APIs can still take a pixel-perfect screenshot.
+    def _try_screenshot() -> bool:
+        return screenshot_figure(save_path)
+
     # ── Poll until image/canvas/download-button appears ───────────────────────
     # Heavy chats make DALL-E take considerably longer — allow up to 10 minutes.
     MAX_WAIT_SEC  = 600   # hard 10-minute cap per "wait" extension
-    IDLE_TIMEOUT  = 180   # give up 3 min after the last "creating" signal
+    IDLE_TIMEOUT  = 300   # give up 5 min after the last "creating" signal
     REPORT_INTERVAL = 30  # seconds between progress messages
+    # In Agent/o1 mode the JS scanner returns None even when the image is
+    # visible; run a Playwright screenshot check every N seconds as a fallback.
+    SCREENSHOT_INTERVAL = 60  # seconds between periodic Phase 3 attempts
 
-    result       = None
-    start        = time.time()
-    deadline     = start + MAX_WAIT_SEC
-    last_active  = time.time()
-    last_reported = 0.0
+    result               = None
+    start                = time.time()
+    deadline             = start + MAX_WAIT_SEC
+    last_active          = time.time()
+    last_reported        = 0.0
+    last_screenshot_try  = start  # don't try immediately — let the image render
+    # When the user types "wait", force-keep last_active alive until this time
+    # so the idle timer cannot expire while they're telling us to hang on.
+    user_wait_until = 0.0
 
     HINT = "Type **skip** to skip this figure, or **wait** to extend the timeout."
 
@@ -717,23 +881,40 @@ def download_last_generated_image(
                 print("  [Browser] Figure download skipped by user.")
                 if progress:
                     progress("Downloading figure… skipped by user.")
-                return False
+                return None  # None = user explicitly skipped (vs False = download failed)
             if cmd == "wait":
-                last_active = time.time()
-                deadline = time.time() + MAX_WAIT_SEC  # extend hard cap
-                print("  [Browser] User requested wait — resetting figure timeout.")
+                now_cmd = time.time()
+                last_active    = now_cmd
+                user_wait_until = now_cmd + MAX_WAIT_SEC  # suppress idle for 10 min
+                deadline       = now_cmd + MAX_WAIT_SEC   # extend hard cap too
+                print("  [Browser] User requested wait — idle timer suspended for 10 min.")
                 if progress:
                     progress(
-                        f"Downloading figure… timeout extended by 10 min. {HINT}"
+                        f"Downloading figure… got it, waiting up to 10 more min. {HINT}"
                     )
 
         raw = _page.evaluate(_SCAN_FOR_IMAGE_JS)
         now = time.time()
         elapsed = int(now - start)
 
+        # If the user said "wait", keep last_active current so idle never fires
+        if now < user_wait_until:
+            last_active = now
+
         if raw is None:
             idle_for = int(now - last_active)
             idle_left = IDLE_TIMEOUT - idle_for
+
+            # Periodic Phase 3 check — in Agent/o1 mode the JS scanner never
+            # sees the image, but Playwright's element API can screenshot it.
+            if now - last_screenshot_try >= SCREENSHOT_INTERVAL:
+                last_screenshot_try = now
+                print("  [Browser] JS scan empty — trying Phase 3 screenshot check.")
+                if _try_screenshot():
+                    if progress:
+                        progress("Downloading figure… captured via screenshot.")
+                    return True
+
             if idle_for >= IDLE_TIMEOUT:
                 print("  [Browser] No image or activity detected — giving up.")
                 if progress:
@@ -743,9 +924,10 @@ def download_last_generated_image(
                 break
             print(f"  [Browser] Waiting for image… ({idle_left}s before idle timeout)")
             if progress and now - last_reported >= REPORT_INTERVAL:
+                hard_left = int(deadline - now)
                 progress(
                     f"Downloading figure… waiting for ChatGPT to generate the image "
-                    f"({elapsed}s elapsed, idle timeout in {idle_left}s). {HINT}"
+                    f"({elapsed}s elapsed, {hard_left}s remaining). {HINT}"
                 )
                 last_reported = now
 
@@ -765,6 +947,15 @@ def download_last_generated_image(
             break
 
     if result is None:
+        # Poll timed out entirely (Agent/o1 mode: JS scanner saw nothing).
+        # Try one final Phase 3 screenshot before giving up.
+        print("  [Browser] Poll timed out — trying final Phase 3 screenshot.")
+        if progress:
+            progress("Downloading figure… poll timed out, attempting screenshot capture.")
+        if _try_screenshot():
+            if progress:
+                progress("Downloading figure… captured via screenshot.")
+            return True
         return False
 
     # ── Phase 1: direct download from img src or canvas data URL ─────────────
@@ -810,13 +1001,17 @@ def download_last_generated_image(
         () => {
             const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
             if (!messages.length) return false;
-            const last = messages[messages.length - 1];
-            for (const el of last.querySelectorAll('a, button')) {
-                const text = (el.textContent || '').toLowerCase();
-                const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-                if (text.includes('download') || aria.includes('download')) {
-                    el.click();
-                    return true;
+            // Scan last 5 messages newest-first so we find the figure even when
+            // a variant-selection or thinking response has pushed it back.
+            const start = Math.max(0, messages.length - 5);
+            for (let j = messages.length - 1; j >= start; j--) {
+                for (const el of messages[j].querySelectorAll('a, button')) {
+                    const text = (el.textContent || '').toLowerCase();
+                    const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                    if (text.includes('download') || aria.includes('download')) {
+                        el.click();
+                        return true;
+                    }
                 }
             }
             return false;
@@ -908,6 +1103,11 @@ def download_last_generated_image(
 
     except Exception as exc:
         print(f"  [Browser] Figure download (Phase 2) failed: {exc}")
+
+    # ── Phase 3: Playwright element screenshot ───────────────────────────────
+    print("  [Browser] Trying Phase 3: element screenshot fallback.")
+    if _try_screenshot():
+        return True
 
     return False
 
