@@ -704,11 +704,26 @@ _SCAN_FOR_IMAGE_JS = """
         // (>= 10 000 px²) reliably excludes icons and UI chrome.
         // Exclude any src already downloaded so old figures in the canvas panel
         // are never returned for a subsequent figure request.
+        // Also exclude images inside nav/aside/header (sidebar profile picture)
+        // and inside user-message containers (chat header avatar) — these are
+        // never generated figures and can be large enough to pass the area filter.
         const MIN_AREA = 10000;
+        const UI_CHROME_TAGS = new Set(['nav', 'aside', 'header', 'footer']);
+        function isUiChrome(el) {
+            let node = el.parentElement;
+            while (node) {
+                const tag = (node.tagName || '').toLowerCase();
+                if (UI_CHROME_TAGS.has(tag)) return true;
+                if (node.getAttribute && node.getAttribute('data-message-author-role') === 'user') return true;
+                node = node.parentElement;
+            }
+            return false;
+        }
         let bestSrc = null, bestArea = 0;
         for (const img of document.querySelectorAll('img[src]')) {
             if (!validScheme(img.src)) continue;
             if (excludeSet.has(img.src)) continue;  // skip already-downloaded
+            if (isUiChrome(img)) continue;           // skip avatars / nav images
             const area = img.naturalWidth * img.naturalHeight;
             if (area >= MIN_AREA && area > bestArea) {
                 bestArea = area;
@@ -794,9 +809,23 @@ def screenshot_figure(save_path: str, baseline_msg_count: int = 0) -> bool:
             // Fallback: search ALL images on the page so figures displayed in
             // ChatGPT's canvas/side-panel (outside message containers) are found.
             // Exclude already-downloaded srcs so the old canvas image is never reused.
+            // Also exclude images inside nav/aside/header (profile avatar) and
+            // user-message containers (chat header avatar).
+            const UI_CHROME_TAGS = new Set(['nav', 'aside', 'header', 'footer']);
+            function isUiChrome(el) {
+                let node = el.parentElement;
+                while (node) {
+                    const tag = (node.tagName || '').toLowerCase();
+                    if (UI_CHROME_TAGS.has(tag)) return true;
+                    if (node.getAttribute && node.getAttribute('data-message-author-role') === 'user') return true;
+                    node = node.parentElement;
+                }
+                return false;
+            }
             for (const img of document.querySelectorAll('img[src]')) {
                 if (!validScheme(img.src)) continue;
                 if (excludeSet.has(img.src)) continue;
+                if (isUiChrome(img)) continue;
                 const area = imgArea(img);
                 if (area > bestArea) { bestArea = area; bestSrc = img.src; }
             }
