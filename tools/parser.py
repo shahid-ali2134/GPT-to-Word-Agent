@@ -26,6 +26,11 @@ _FIGURE_LABEL_START_RE = re.compile(
     r"^\s*(?:fig\.?|figure)\s+(\d+)\s*[.:\-–—]", re.I
 )
 
+# Standalone "Table X. Title" line (not inline prose)
+_TABLE_TITLE_RE = re.compile(r"^\s*table\s+\d+\s*[.:\-–—]?\s+\S", re.I)
+# Strip "Table X." / "Table X:" prefix so Word's auto-number isn't duplicated
+_TABLE_LABEL_PREFIX_RE = re.compile(r"^\s*table\s+\d+\s*[.:\-–—]?\s*", re.I)
+
 # Detects a raw LaTeX equation that GPT emitted without $$ markers.
 # Must contain at least one \command and look like "expr = ..." or start with \command.
 _LATEX_CMD_RE = re.compile(r"\\[a-zA-Z]+")
@@ -351,7 +356,14 @@ def parse_markdown(text: str) -> List[Block]:
             blocks.extend(_parse_figure_block(lines))
 
         elif _is_non_prose_group(lines):
-            _append_artifact_from_lines(blocks, lines)
+            first_clean = _strip_inline_markers(lines[0])
+            if _TABLE_TITLE_RE.match(first_clean):
+                # Standalone "Table X. Title" → table_caption (written below table)
+                content = " ".join(line.strip() for line in lines if line.strip())
+                content = _TABLE_LABEL_PREFIX_RE.sub("", content).strip()
+                blocks.append(Block("table_caption", parse_inline(content)))
+            else:
+                _append_artifact_from_lines(blocks, lines)
 
         elif CHAPTER_NUMBER_RE.match(first) and rest:
             blocks.append(Block("chapter", parse_inline(rest[0].strip())))

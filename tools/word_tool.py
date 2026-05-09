@@ -372,6 +372,9 @@ def _write_figure_block(doc: Document, block, styles: dict):
 _FIGURE_LABEL_PREFIX_RE = re.compile(
     r"^\s*(?:fig\.?|figure)\s+\d+\s*[.:\-–—]?\s*", re.I
 )
+_TABLE_LABEL_PREFIX_RE = re.compile(
+    r"^\s*table\s+\d+\s*[.:\-–—]?\s*", re.I
+)
 
 
 def _write_word_caption(doc: Document, label: str, caption_text: str = ""):
@@ -426,11 +429,18 @@ def _write_word_caption(doc: Document, label: str, caption_text: str = ""):
         p.append(_run(f" {caption_text.strip()}"))
 
 
+def _strip_caption_prefix(text: str, label: str) -> str:
+    """Remove leading label+number from caption text (Word adds the number itself)."""
+    if label == "Figure":
+        return _FIGURE_LABEL_PREFIX_RE.sub("", text).strip()
+    if label == "Table":
+        return _TABLE_LABEL_PREFIX_RE.sub("", text).strip()
+    return text.strip()
+
+
 def _write_figure_caption_block(doc: Document, block, styles: dict):
     """Write a figure caption using Word's built-in Caption style + SEQ field."""
-    raw_text = block.plain_text
-    # Strip leading "Fig. X." / "Figure X:" so Word's auto-number isn't duplicated
-    caption_text = _FIGURE_LABEL_PREFIX_RE.sub("", raw_text).strip()
+    caption_text = _strip_caption_prefix(block.plain_text, "Figure")
     _write_word_caption(doc, "Figure", caption_text)
 
 
@@ -454,7 +464,9 @@ def append_blocks_to_word(blocks: list[Block], word_file_path: str) -> str:
 
         if block.block_type == "table":
             _write_table_block(doc, block, styles)
-            cap_text = pending_table_caption.plain_text if pending_table_caption else ""
+            cap_text = _strip_caption_prefix(
+                pending_table_caption.plain_text if pending_table_caption else "", "Table"
+            )
             _write_word_caption(doc, "Table", cap_text)
             pending_table_caption = None
             continue
@@ -464,6 +476,10 @@ def append_blocks_to_word(blocks: list[Block], word_file_path: str) -> str:
             # flush it as a plain caption before continuing.
             _write_word_caption(doc, "Table", pending_table_caption.plain_text)
             pending_table_caption = None
+
+        # Artifacts are placement/description notes — skip in final Word output
+        if block.block_type == "artifact":
+            continue
 
         if block.block_type == "equation":
             _write_equation_block(doc, block, styles)
