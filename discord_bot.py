@@ -27,6 +27,7 @@ from agent_core import (
     humanize_with_stealthwriter,
     recover_pending,
     write_complete_chapter,
+    write_complete_chapter_v2,
     write_sections,
 )
 from tools.browser_tool import close_browser
@@ -216,6 +217,64 @@ async def write_complete_chapter_command(
         interaction,
         (
             "Done. Wrote the chapter to Word.\n"
+            f"Project: {result['project']}\n"
+            f"Chapter: {result['chapter']}\n"
+            f"Responses written: {result['written_sections']}\n"
+            f"Document: {result['word_file_path']}"
+        ),
+    )
+
+
+@bot.tree.command(
+    name="writecompletechapterv2",
+    description="Write a full chapter (batches Word writes every 3 sections for speed).",
+)
+@app_commands.describe(
+    write_chapter_number="Chapter number to write",
+    outline_file="Upload a .txt file containing the chapter outline",
+    project="Project key from config.json",
+)
+async def write_complete_chapter_v2_command(
+    interaction: discord.Interaction,
+    write_chapter_number: int,
+    outline_file: discord.Attachment,
+    project: str = DEFAULT_PROJECT,
+):
+    await interaction.response.defer(thinking=True)
+    loop = asyncio.get_running_loop()
+
+    try:
+        outline_bytes = await outline_file.read()
+        chapter_outline = outline_bytes.decode("utf-8-sig").strip()
+    except UnicodeDecodeError:
+        await _send_followup(interaction, "Error: outline_file must be a UTF-8 text file.")
+        return
+
+    progress = _make_progress_sender(interaction, loop)
+    configure_figure_input_fn(_make_figure_input_fn(interaction, loop))
+    configure_figure_interrupt_fn(_make_figure_interrupt_fn(interaction))
+    try:
+        async with interaction.channel.typing():
+            result = await loop.run_in_executor(
+                executor,
+                lambda: write_complete_chapter_v2(
+                    project_name=project,
+                    chapter_number=write_chapter_number,
+                    chapter_outline=chapter_outline,
+                    progress=progress,
+                ),
+            )
+    except Exception as exc:
+        await _send_followup(interaction, f"Error: {exc}")
+        raise
+    finally:
+        configure_figure_input_fn(None)
+        configure_figure_interrupt_fn(None)
+
+    await _send_followup(
+        interaction,
+        (
+            "Done. Wrote the chapter to Word (v2 — batched every 3 sections).\n"
             f"Project: {result['project']}\n"
             f"Chapter: {result['chapter']}\n"
             f"Responses written: {result['written_sections']}\n"

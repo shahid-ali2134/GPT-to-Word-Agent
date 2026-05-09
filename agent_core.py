@@ -667,6 +667,111 @@ def write_complete_chapter(
     }
 
 
+def write_complete_chapter_v2(
+    project_name: str = DEFAULT_PROJECT,
+    chapter_number: int = DEFAULT_CHAPTER_NUMBER,
+    chapter_outline: str | None = None,
+    progress=None,
+    batch_size: int = 3,
+) -> dict:
+    """
+    Same as write_complete_chapter but batches Word writes every *batch_size*
+    sections (default 3) instead of after every single section.
+
+    Sections are fetched and processed (humanize, figures) one at a time as
+    before, but the COM append call only happens once per batch — reducing
+    overhead and keeping the document in a cleaner state between writes.
+    Any sections left in the buffer at the end are flushed automatically.
+    """
+    if not chapter_outline or not chapter_outline.strip():
+        raise ValueError("Chapter outline is required.")
+
+    chapter_outline = chapter_outline.strip()
+    project = get_project(project_name)
+    selected_chapter = f"chapter_{chapter_number}"
+    word_file_path = project["word_file_path"]
+    chapter_title = _chapter_title_from_outline(chapter_number, chapter_outline)
+
+    def report(message: str):
+        if progress:
+            progress(message)
+
+    report(f"Opening ChatGPT chat for project '{project_name}'.")
+    navigate_result = navigate_to_chat(project["chat_url"], project.get("browser", "chrome"))
+    if navigate_result.lower().startswith(("warning", "error")):
+        raise RuntimeError(navigate_result)
+
+    outline_prompt = build_outline_prompt(chapter_number, chapter_outline)
+    report("Requesting the chapter outline from ChatGPT.")
+    send_message(outline_prompt, progress=progress)
+    outline_response = get_last_response()
+
+    # ── Introductory paragraphs (section 1) ────────────────────────────────────
+    intro_prompt = build_intro_prompt(chapter_number, chapter_outline)
+    report("Writing the introductory paragraphs.")
+    send_message(intro_prompt, progress=progress)
+    response = _strip_gpt_preamble(get_last_response())
+    blocks = _humanize_for_word(response, project, report)
+    blocks = _normalize_chapter_opening(blocks, chapter_title)
+    blocks = _prepend_chapter_heading(blocks, chapter_title)
+    blocks = _fix_extra_chapter_blocks(blocks)
+    blocks = _resolve_figures(blocks, word_file_path, report)
+
+    pending_blocks: list = list(blocks)
+    sections_in_batch = 1
+    written_sections = 1
+
+    # ── Continue until chapter summary ────────────────────────────────────────
+    while not _contains_chapter_summary(response):
+        if written_sections >= MAX_CHAPTER_STEPS:
+            raise RuntimeError(
+                f"Stopped after {MAX_CHAPTER_STEPS} written responses without finding Chapter Summary."
+            )
+
+        if _response_reached_section_6(response) and not _is_response_truncated(response):
+            next_prompt = CONCLUDE_CHAPTER_PROMPT
+        else:
+            next_prompt = CONTINUE_PROMPT
+
+        report(f"Continuing to the next section ({written_sections + 1}).")
+        send_message(next_prompt, progress=progress)
+        response = _strip_gpt_preamble(get_last_response())
+        blocks = _humanize_for_word(response, project, report)
+        blocks = _demote_chapter_to_heading2(blocks)
+        blocks = _resolve_figures(blocks, word_file_path, report)
+
+        pending_blocks.extend(blocks)
+        sections_in_batch += 1
+        written_sections += 1
+
+        is_last = _contains_chapter_summary(response)
+        if sections_in_batch >= batch_size or is_last:
+            report(f"Saving {sections_in_batch} section(s) to Word.")
+            append_result = _append_with_retry(pending_blocks, word_file_path, report)
+            report(append_result)
+            pending_blocks = []
+            sections_in_batch = 0
+
+    # Flush any sections remaining in an incomplete batch
+    if pending_blocks:
+        report(f"Saving remaining {sections_in_batch} section(s) to Word.")
+        append_result = _append_with_retry(pending_blocks, word_file_path, report)
+        report(append_result)
+
+    cfg = load_config()
+    cfg["projects"][project_name]["current_chapter"] = selected_chapter
+    cfg["projects"][project_name].setdefault("outlines", {})[selected_chapter] = chapter_outline
+    save_config(cfg)
+
+    return {
+        "project": project_name,
+        "chapter": selected_chapter,
+        "word_file_path": word_file_path,
+        "written_sections": written_sections,
+        "outline_preview": outline_response[:500],
+    }
+
+
 def write_sections(
     project_name: str = DEFAULT_PROJECT,
     chapter_number: int = DEFAULT_CHAPTER_NUMBER,
