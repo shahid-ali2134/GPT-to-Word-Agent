@@ -26,6 +26,43 @@ _FIGURE_LABEL_START_RE = re.compile(
     r"^\s*(?:fig\.?|figure)\s+(\d+)\s*[.:\-–—]", re.I
 )
 
+# Detects a raw LaTeX equation that GPT emitted without $$ markers.
+# Must contain at least one \command and look like "expr = ..." or start with \command.
+_LATEX_CMD_RE = re.compile(r"\\[a-zA-Z]+")
+_STANDALONE_EQ_START_RE = re.compile(
+    r"^[A-Za-z_{}^\\()\[\]\d\s,.]+\s*="   # expression = ...
+    r"|^\\[a-zA-Z]"                         # starts with \command
+)
+_LATEX_TAG_STRIP_RE = re.compile(
+    r"\\tag\*?\{[^}]*\}|\\label\{[^}]*\}|\\notag\b|\\nonumber\b",
+    re.IGNORECASE,
+)
+
+# Common LaTeX commands → Unicode for inline symbol rendering in Word
+_LATEX_UNICODE = {
+    r"\alpha": "α",   r"\beta": "β",    r"\gamma": "γ",   r"\delta": "δ",
+    r"\epsilon": "ε", r"\varepsilon": "ε", r"\zeta": "ζ", r"\eta": "η",
+    r"\theta": "θ",   r"\vartheta": "ϑ", r"\iota": "ι",  r"\kappa": "κ",
+    r"\lambda": "λ",  r"\mu": "μ",      r"\nu": "ν",      r"\xi": "ξ",
+    r"\pi": "π",      r"\varpi": "ϖ",   r"\rho": "ρ",     r"\varrho": "ϱ",
+    r"\sigma": "σ",   r"\varsigma": "ς", r"\tau": "τ",    r"\upsilon": "υ",
+    r"\phi": "φ",     r"\varphi": "φ",  r"\chi": "χ",     r"\psi": "ψ",
+    r"\omega": "ω",
+    r"\Gamma": "Γ",   r"\Delta": "Δ",   r"\Theta": "Θ",   r"\Lambda": "Λ",
+    r"\Xi": "Ξ",      r"\Pi": "Π",      r"\Sigma": "Σ",   r"\Upsilon": "Υ",
+    r"\Phi": "Φ",     r"\Psi": "Ψ",     r"\Omega": "Ω",
+    r"\leq": "≤",     r"\geq": "≥",     r"\neq": "≠",     r"\approx": "≈",
+    r"\infty": "∞",   r"\partial": "∂", r"\nabla": "∇",   r"\sum": "∑",
+    r"\prod": "∏",    r"\int": "∫",     r"\in": "∈",      r"\notin": "∉",
+    r"\subset": "⊂",  r"\subseteq": "⊆", r"\cup": "∪",   r"\cap": "∩",
+    r"\forall": "∀",  r"\exists": "∃",  r"\neg": "¬",     r"\wedge": "∧",
+    r"\vee": "∨",     r"\oplus": "⊕",   r"\otimes": "⊗",  r"\cdot": "·",
+    r"\times": "×",   r"\div": "÷",     r"\pm": "±",      r"\mp": "∓",
+    r"\rightarrow": "→", r"\leftarrow": "←", r"\Rightarrow": "⇒",
+    r"\Leftarrow": "⇐", r"\leftrightarrow": "↔", r"\Leftrightarrow": "⟺",
+    r"\to": "→",      r"\gets": "←",
+}
+
 
 @dataclass
 class Run:
@@ -48,9 +85,28 @@ class Block:
         return "".join(r.text for r in self.runs)
 
 
+def _latex_to_unicode(text: str) -> str:
+    """Replace known LaTeX commands with their Unicode equivalents."""
+    # Subscripts: x_{abc} or x_a  →  x (subscript chars not available in plain Unicode,
+    # so strip the braces and leave the content; e.g. \lambda_{1} → λ₁ where possible)
+    # First expand known \commands
+    for cmd, uni in _LATEX_UNICODE.items():
+        text = text.replace(cmd, uni)
+    # Strip remaining \commands (unknown ones) — remove the backslash so \exec → exec
+    text = re.sub(r"\\([a-zA-Z]+)", r"\1", text)
+    # Remove braces used for grouping: {abc} → abc
+    text = re.sub(r"\{([^{}]*)\}", r"\1", text)
+    # Convert subscript digits: x_1 → x₁  (only single digits)
+    _SUB = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
+    text = re.sub(r"_(\d)", lambda m: m.group(1).translate(_SUB), text)
+    # Strip remaining _ and ^
+    text = text.replace("_", "").replace("^", "")
+    return text.strip()
+
+
 def parse_inline(text: str) -> List[Run]:
     """Split inline markdown (***bold+italic***, **bold**, *italic*) into Runs.
-    Inline $$latex$$ is rendered as italic text (the LaTeX expression, no markers)."""
+    Inline $$latex$$ tokens are converted to Unicode symbols (italic run)."""
     runs: List[Run] = []
     pattern = re.compile(
         r"(\*{3}(.+?)\*{3}|\*{2}(.+?)\*{2}|\*(.+?)\*|\$\$(.+?)\$\$|([^*$]+))"
@@ -62,8 +118,8 @@ def parse_inline(text: str) -> List[Run]:
             runs.append(Run(match.group(3), bold=True))
         elif match.group(4):
             runs.append(Run(match.group(4), italic=True))
-        elif match.group(5):  # inline $$...$$
-            runs.append(Run(match.group(5), italic=True))
+        elif match.group(5):  # inline $$latex$$  → Unicode italic
+            runs.append(Run(_latex_to_unicode(match.group(5)), italic=True))
         elif match.group(6):
             runs.append(Run(match.group(6)))
     return runs if runs else [Run(text)]
@@ -238,6 +294,21 @@ def _is_display_equation(lines: List[str]) -> bool:
     return lines[0].strip() == "$$" and lines[-1].strip() == "$$" and len(lines) >= 3
 
 
+def _is_standalone_latex_equation(lines: List[str]) -> bool:
+    """
+    True when a group is a raw LaTeX equation GPT emitted without $$ markers.
+    Catches lines like:  R = \\lambda_1 L + \\lambda_2 I + \\lambda_3 U + \\lambda_4 C \\tag{10}
+    """
+    if not lines or len(lines) > 3:
+        return False
+    text = " ".join(line.strip() for line in lines if line.strip())
+    if len(text) > 300:
+        return False
+    if not _LATEX_CMD_RE.search(text):
+        return False
+    return bool(_STANDALONE_EQ_START_RE.match(text))
+
+
 def _parse_display_equation(lines: List[str]) -> Block:
     if len(lines) == 1:
         latex = lines[0].strip()[2:-2].strip()
@@ -329,6 +400,13 @@ def parse_markdown(text: str) -> List[Block]:
                     content = re.sub(r"^[-*•]\s+|^\d+\.\s+", "", line.strip())
                     if content:
                         blocks.append(Block("list_item", parse_inline(content)))
+
+            elif _is_standalone_latex_equation(lines):
+                eq_block = Block("equation")
+                eq_block.latex = _LATEX_TAG_STRIP_RE.sub(
+                    "", " ".join(line.strip() for line in lines)
+                ).strip()
+                blocks.append(eq_block)
 
             else:
                 _append_body_from_lines(blocks, lines)
