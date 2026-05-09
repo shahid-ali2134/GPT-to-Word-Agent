@@ -16,7 +16,7 @@ NON_PROSE_START_RE = re.compile(
 )
 _INLINE_MARKER_RE = re.compile(r"^[\*_]{1,3}|[\*_]{1,3}$")
 FIGURE_PLACEMENT_RE = re.compile(
-    r"^\s*placement\s*:\s*(?:insert\s+)?(?:fig\.?|figure)\s*(\d+)\s*(?:here\.?)?\s*$", re.I
+    r"^\s*placement\s*:.*?(?:fig\.?|figure)\s*(\d+)", re.I
 )
 FIGURE_CAPTION_RE = re.compile(
     r"^\s*(?:fig\.?|figure)\s+(\d+)[.]\s+(.+)$", re.I
