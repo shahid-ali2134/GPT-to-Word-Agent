@@ -32,6 +32,7 @@ STYLE_KEY_MAP = {
     "list_item":          "body",
     "artifact":           "body",
     "table":              "body",
+    "table_caption":      "body",
     "equation":           "body",
     "figure":             "body",
     "figure_caption":     "body",
@@ -46,6 +47,7 @@ WORD_STYLE_MAP = {
     "list_item":          "Normal",
     "artifact":           "Normal",
     "table":              "Normal",
+    "table_caption":      "Normal",
     "equation":           "Normal",
     "figure":             "Normal",
     "figure_caption":     "Normal",
@@ -339,7 +341,7 @@ def _write_table_block(doc: Document, block, styles: dict):
             run.font.name = font_name
             run.font.size = font_size
 
-    # Add a blank paragraph after the table so following text isn't flush
+    # Blank paragraph after table — caption (if any) will follow this
     doc.add_paragraph()
 
 
@@ -367,17 +369,69 @@ def _write_figure_block(doc: Document, block, styles: dict):
         run.italic = True
 
 
+_FIGURE_LABEL_PREFIX_RE = re.compile(
+    r"^\s*(?:fig\.?|figure)\s+\d+\s*[.:\-–—]?\s*", re.I
+)
+
+
+def _write_word_caption(doc: Document, label: str, caption_text: str = ""):
+    """
+    Insert a Word auto-numbered caption using the built-in Caption style.
+    Produces the same output as Insert → Caption in Word.
+    label: "Figure" or "Table"
+    caption_text: descriptive text that follows the auto-number
+    """
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    try:
+        para = doc.add_paragraph(style="Caption")
+    except Exception:
+        para = doc.add_paragraph()
+
+    p = para._p
+
+    def _run(text):
+        r = OxmlElement("w:r")
+        t = OxmlElement("w:t")
+        t.set(qn("xml:space"), "preserve")
+        t.text = text
+        r.append(t)
+        return r
+
+    def _fldchar(fld_type):
+        r = OxmlElement("w:r")
+        fc = OxmlElement("w:fldChar")
+        fc.set(qn("w:fldCharType"), fld_type)
+        r.append(fc)
+        return r
+
+    # "Figure " / "Table " label
+    p.append(_run(f"{label} "))
+
+    # SEQ field  →  SEQ Figure \* ARABIC  or  SEQ Table \* ARABIC
+    p.append(_fldchar("begin"))
+    r_instr = OxmlElement("w:r")
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = f" SEQ {label} \\* ARABIC "
+    r_instr.append(instr)
+    p.append(r_instr)
+    p.append(_fldchar("separate"))
+    p.append(_run("1"))          # cached placeholder — Word updates on open
+    p.append(_fldchar("end"))
+
+    # Descriptive caption text
+    if caption_text.strip():
+        p.append(_run(f" {caption_text.strip()}"))
+
+
 def _write_figure_caption_block(doc: Document, block, styles: dict):
-    """Write a figure caption as centered body text."""
-    cfg = styles.get("body", {})
-    para = doc.add_paragraph()
-    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    for run_data in block.runs:
-        run = para.add_run(run_data.text)
-        run.font.name = cfg.get("font", "Garamond")
-        run.font.size = Pt(cfg.get("size_pt", 11))
-        run.bold = run_data.bold
-        run.italic = run_data.italic
+    """Write a figure caption using Word's built-in Caption style + SEQ field."""
+    raw_text = block.plain_text
+    # Strip leading "Fig. X." / "Figure X:" so Word's auto-number isn't duplicated
+    caption_text = _FIGURE_LABEL_PREFIX_RE.sub("", raw_text).strip()
+    _write_word_caption(doc, "Figure", caption_text)
 
 
 def append_blocks_to_word(blocks: list[Block], word_file_path: str) -> str:
@@ -388,10 +442,28 @@ def append_blocks_to_word(blocks: list[Block], word_file_path: str) -> str:
     if not blocks:
         return "Warning: no content blocks parsed from response."
 
+    # table_caption blocks appear before their table in the parsed block list
+    # but must be emitted AFTER the table in Word (below it).
+    pending_table_caption: Block | None = None
+
     for block in blocks:
+        if block.block_type == "table_caption":
+            # Hold it — write after the next table
+            pending_table_caption = block
+            continue
+
         if block.block_type == "table":
             _write_table_block(doc, block, styles)
+            cap_text = pending_table_caption.plain_text if pending_table_caption else ""
+            _write_word_caption(doc, "Table", cap_text)
+            pending_table_caption = None
             continue
+
+        if pending_table_caption:
+            # A table_caption appeared but was not immediately followed by a table;
+            # flush it as a plain caption before continuing.
+            _write_word_caption(doc, "Table", pending_table_caption.plain_text)
+            pending_table_caption = None
 
         if block.block_type == "equation":
             _write_equation_block(doc, block, styles)
@@ -427,6 +499,10 @@ def append_blocks_to_word(blocks: list[Block], word_file_path: str) -> str:
                 continue
             run = para.add_run(text)
             _apply_run_format(run, cfg, bold=run_data.bold, italic=run_data.italic)
+
+    # Flush any trailing table caption that had no table after it
+    if pending_table_caption:
+        _write_word_caption(doc, "Table", pending_table_caption.plain_text)
 
     doc.save(word_file_path)
     return f"OK: wrote {len(blocks)} block(s) to '{word_file_path}'"

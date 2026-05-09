@@ -73,7 +73,7 @@ class Run:
 
 @dataclass
 class Block:
-    block_type: str  # 'chapter','heading2','heading3','body','list_item','artifact','table','equation','figure_placeholder','figure_caption','figure'
+    block_type: str  # 'chapter','heading2','heading3','body','list_item','artifact','table','table_caption','equation','figure_placeholder','figure_caption','figure'
     runs: List[Run] = field(default_factory=list)
     table_rows: List[List[str]] = field(default_factory=list)  # rows × cols for 'table' blocks
     latex: str = ""           # raw LaTeX string for 'equation' blocks
@@ -174,7 +174,8 @@ def _is_table_group(lines: List[str]) -> bool:
 def _parse_table_group(lines: List[str]) -> List[Block]:
     """
     Parse a group that contains tab-separated table rows.
-    Lines before the first tab line are treated as a caption (artifact block).
+    Lines before the first tab line become a table_caption block (written
+    below the table in Word using Insert Caption style).
     Tab lines become a single 'table' block with structured row/column data.
     """
     result: List[Block] = []
@@ -184,7 +185,9 @@ def _parse_table_group(lines: List[str]) -> List[Block]:
     table_lines = lines[first_tab:]
 
     if caption_lines:
-        _append_artifact_from_lines(result, caption_lines)
+        content = " ".join(line.strip() for line in caption_lines if line.strip())
+        if content:
+            result.append(Block("table_caption", parse_inline(content)))
 
     rows = [
         [cell.strip() for cell in line.split("\t")]
