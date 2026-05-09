@@ -2,9 +2,11 @@
 Shared workflow helpers for the ChatGPT to Word agent.
 """
 
+import glob
 import json
 import os
 import re
+import shutil
 import time
 
 from tools.browser_tool import download_last_generated_image, get_last_response, navigate_to_chat, send_message
@@ -35,6 +37,37 @@ CONCLUDE_CHAPTER_PROMPT = (
 MAX_CHAPTER_STEPS = 40
 MAX_FINISH_STEPS = 40
 SECTION_DONE_MARKER = "[SECTION_WORKFLOW_COMPLETE]"
+
+# ── Figure manual-download bridge ─────────────────────────────────────────────
+# Set by discord_bot.py before running any chapter command.  When set, the agent
+# will ask the user for help if it cannot auto-download a figure, then wait for
+# a reply instead of silently inserting a placeholder.
+# Signature: (message: str) -> str | None   (returns user reply, or None on timeout)
+_figure_input_fn: "callable | None" = None
+
+
+def configure_figure_input_fn(fn: "callable | None") -> None:
+    """Register (or clear) the Discord reply function for manual figure download."""
+    global _figure_input_fn
+    _figure_input_fn = fn
+
+
+def _find_latest_download(max_age_sec: float = 600.0) -> "str | None":
+    """Return the path of the most-recently modified image in the user's Downloads folder.
+
+    Only returns a file if it was modified within *max_age_sec* seconds (default 10 min),
+    so we don't accidentally grab a stale download from an earlier session.
+    """
+    downloads = os.path.expanduser("~/Downloads")
+    candidates: list[str] = []
+    for ext in ("*.png", "*.jpg", "*.jpeg", "*.webp"):
+        candidates.extend(glob.glob(os.path.join(downloads, ext)))
+    if not candidates:
+        return None
+    latest = max(candidates, key=os.path.getmtime)
+    if time.time() - os.path.getmtime(latest) <= max_age_sec:
+        return latest
+    return None
 SECTION_6_RE = re.compile(r"(?m)^\s*(?:#{1,4}|[*]{1,3})?\s*\d+\.6\b")
 SECTION_PROMPT_TEMPLATE = """Write only the requested part of chapter {chapter_number}.
 
@@ -94,8 +127,10 @@ def _resolve_figures(
         if fig_num == 0:
             continue  # malformed placeholder — no figure number detected
         report(f"Requesting figure {fig_num} from ChatGPT.")
-        send_message(f"Draw figure {fig_num} please!")
-        get_last_response()  # wait for generation to complete
+        send_result = send_message(f"Draw figure {fig_num} please!")
+        if send_result.startswith("Warning") or send_result.startswith("Error"):
+            report(f"Warning: Could not send figure request for figure {fig_num}: {send_result}")
+            continue
 
         save_path = os.path.join(figures_dir, f"fig_{fig_num:03d}.png")
         report(f"Downloading figure {fig_num}.")
@@ -108,7 +143,52 @@ def _resolve_figures(
             result[i] = new_block
             report(f"Figure {fig_num} saved to {save_path}.")
         else:
-            report(f"Warning: Could not download figure {fig_num}. A placeholder will appear in Word.")
+            # ── Ask the user for manual help via Discord ───────────────────────
+            if _figure_input_fn:
+                notify = (
+                    f"⚠️ **Could not auto-download Figure {fig_num}.**\n"
+                    f"The share modal should be open in the browser — please click **Download**.\n"
+                    f"• Reply **`done`** once the file is saved to your Downloads folder.\n"
+                    f"• Reply **`wait`** if the figure is still being created.\n"
+                    f"• Reply **`skip`** to insert a placeholder and move on.\n"
+                    f"_(Waiting up to 5 minutes)_"
+                )
+                # Loop so the user can reply "wait" multiple times
+                while True:
+                    reply = _figure_input_fn(notify)
+                    if reply is None:
+                        report(f"Warning: No reply received for Figure {fig_num}. Using placeholder.")
+                        break
+                    reply_lower = reply.strip().lower()
+                    if reply_lower in ("wait", "w"):
+                        notify = (
+                            f"⏳ Got it — still waiting for **Figure {fig_num}**.\n"
+                            f"Reply **`done`** when downloaded, **`wait`** to keep waiting, "
+                            f"or **`skip`** to use a placeholder."
+                        )
+                        continue
+                    if reply_lower in ("skip", "no", "n", "s"):
+                        report(f"Warning: Figure {fig_num} skipped by user. A placeholder will appear in Word.")
+                        break
+                    # Any other reply ("done", "ok", …) → try to grab from Downloads
+                    downloaded = _find_latest_download()
+                    if downloaded:
+                        shutil.copy2(downloaded, save_path)
+                        new_block = Block("figure")
+                        new_block.figure_number = fig_num
+                        new_block.figure_image_path = save_path
+                        result[i] = new_block
+                        report(f"Figure {fig_num}: grabbed '{os.path.basename(downloaded)}' from Downloads.")
+                        success = True
+                    else:
+                        report(
+                            f"Warning: Figure {fig_num} — could not find a recent file in Downloads. "
+                            "A placeholder will appear in Word."
+                        )
+                    break
+
+            if not success:
+                report(f"Warning: Could not download figure {fig_num}. A placeholder will appear in Word.")
 
     return result
 
@@ -242,6 +322,21 @@ def _first_section(chapter_number: str, chapter_outline: str) -> str:
     return marker if marker in chapter_outline else f"{chapter_number}.1"
 
 
+def _is_response_truncated(text: str) -> bool:
+    """Return True if the response appears to be cut off mid-generation.
+
+    A complete GPT response ends with sentence-closing punctuation, a
+    closing delimiter, or a standalone heading/list line.  A bare word,
+    comma, or conjunction indicates truncation.
+    """
+    lines = [l for l in text.splitlines() if l.strip()]
+    if not lines:
+        return False
+    last = lines[-1].strip()
+    # Ends with sentence punctuation, closing bracket/quote, code-fence, or heading marker
+    return not re.search(r'[.!?)\]"`\'»—]$|^#{1,4}\s|```$|\*{3}$', last)
+
+
 def _contains_chapter_summary(content: str) -> bool:
     lower = content.lower()
     summary_markers = (
@@ -310,17 +405,18 @@ def _apply_humanized_paragraphs(
 
 
 _MATH_BODY_RE = re.compile(
-    r"\\[a-zA-Z]+[\{\( ]"   # \command{ or \command( or \command<space>
-    r"|_\{"                   # _{subscript}
-    r"|\^\{"                  # ^{superscript}
-    r"|\$\$"                  # $$display math$$
-    r"|\\left"                # \left(
-    r"|\\right"               # \right)
+    # LaTeX backslash patterns
+    r"\\[a-zA-Z]+[\{\( ]"
+    r"|_\{|\^\{|\$\$|\\left|\\right"
+    # Unicode math operators that essentially never appear in plain prose
+    r"|[∑∏∫∬∭∮∧∨∀∃∄∈∉∋⊂⊃⊆⊇⊕⊗⊙⊘∓√∞∂∇≡≅≃≈∼≜]"
+    # Double-struck / blackboard-bold letters used in math
+    r"|[ℝℕℤℚℂℙ𝔼𝟙𝟘]"
 )
 
 
 def _is_math_body(text: str) -> bool:
-    """True when a body paragraph is raw LaTeX/math and must not be humanized."""
+    """True when a body paragraph contains math and must not be humanized."""
     return bool(_MATH_BODY_RE.search(text))
 
 
@@ -603,17 +699,37 @@ def finish_chapter(
             report("Chapter summary detected. Chapter complete.")
             break
 
-        if _response_reached_section_6(response):
+        # Only trigger the conclude phase when section 6 is fully written.
+        # If the response was truncated mid-way we just keep continuing.
+        if _response_reached_section_6(response) and not _is_response_truncated(response):
             report("Section 6 reached. Sending concluding prompt.")
             send_message(CONCLUDE_CHAPTER_PROMPT)
-            response = _strip_gpt_preamble(get_last_response())
-            blocks_for_word = _humanize_for_word(response, project, report)
-            blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
-            blocks_for_word = _resolve_figures(blocks_for_word, word_file_path, report)
-            report("Saving final sections to Word.")
-            append_result = _append_with_retry(blocks_for_word, word_file_path, report)
-            written_sections += 1
-            report(append_result)
+
+            # The concluding response may itself be truncated — keep going until done.
+            while True:
+                response = _strip_gpt_preamble(get_last_response())
+                blocks_for_word = _humanize_for_word(response, project, report)
+                blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
+                blocks_for_word = _resolve_figures(blocks_for_word, word_file_path, report)
+                report("Saving final sections to Word.")
+                append_result = _append_with_retry(blocks_for_word, word_file_path, report)
+                written_sections += 1
+                report(append_result)
+
+                if _contains_chapter_summary(response):
+                    report("Chapter summary detected. Chapter complete.")
+                    break
+
+                if not _is_response_truncated(response):
+                    report("Concluding response complete. Chapter done.")
+                    break
+
+                if written_sections >= MAX_FINISH_STEPS:
+                    break
+
+                report("Concluding response appears truncated — requesting continuation.")
+                send_message(CONTINUE_PROMPT)
+
             break
 
     return {

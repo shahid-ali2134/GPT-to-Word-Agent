@@ -232,8 +232,24 @@ def _type_text(page: Page, selector: str, text: str):
         page.wait_for_timeout(300)
 
 
-def _wait_for_generation_complete(page: Page, timeout_sec: int = 180):
-    """Poll until ChatGPT stops generating (stop button disappears)."""
+def _count_assistant_messages(page: Page) -> int:
+    """Return the number of assistant messages currently on the page."""
+    try:
+        return page.evaluate(
+            "() => document.querySelectorAll('[data-message-author-role=\"assistant\"]').length"
+        )
+    except Exception:
+        return 0
+
+
+def _wait_for_generation_complete(page: Page, prev_msg_count: int = 0, timeout_sec: int = 180):
+    """Poll until ChatGPT stops generating (stop button disappears).
+
+    prev_msg_count — number of assistant messages that existed BEFORE the
+    prompt was sent.  We first wait for a new message to appear (guards
+    against reading the old response when GPT responds too quickly for the
+    stop-button heuristic to catch it), then wait for generation to finish.
+    """
     stop_selectors = [
         'button[data-testid="stop-button"]',
         'button[aria-label="Stop generating"]',
@@ -241,13 +257,19 @@ def _wait_for_generation_complete(page: Page, timeout_sec: int = 180):
     ]
     combined = ", ".join(stop_selectors)
 
-    # Wait for the stop button to appear (generation started)
-    try:
-        page.wait_for_selector(combined, timeout=8_000, state="visible")
-    except Exception:
-        pass  # Generation may have been near-instant
+    # ── Phase 1: wait until a NEW assistant message node appears (up to 15 s) ──
+    new_msg_deadline = time.time() + 15
+    while time.time() < new_msg_deadline:
+        if _count_assistant_messages(page) > prev_msg_count:
+            break
+        try:
+            if page.query_selector(combined):
+                break
+        except Exception:
+            pass
+        page.wait_for_timeout(500)
 
-    # Wait for the stop button to disappear (generation done)
+    # ── Phase 2: wait for the stop button to disappear (generation done) ──────
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
         visible = any(
@@ -361,6 +383,44 @@ def _extract_last_response(page: Page) -> str:
 # Public API (called by agent.py)
 # ──────────────────────────────────────────────
 
+def _wait_for_page_ready(page: Page, timeout_sec: int = 30) -> None:
+    """Wait until the ChatGPT SPA has fully hydrated the conversation.
+
+    ChatGPT is a React SPA: after goto() the DOM shell loads quickly
+    (domcontentloaded fires) but the conversation history is fetched via API
+    and rendered asynchronously.  Typing into the textarea before React has
+    hydrated it causes the text to be silently discarded.
+
+    Strategy:
+      1. Wait for network to go idle (API calls complete).
+      2. Poll until the assistant-message count is stable for 2 s, meaning
+         the conversation render is done.
+      3. Hard cap of *timeout_sec* seconds so we never block forever.
+    """
+    # Step 1 — network idle (API responses received)
+    try:
+        page.wait_for_load_state("networkidle", timeout=min(timeout_sec * 1_000, 20_000))
+    except Exception:
+        pass  # timeout is fine — we'll still do the stability check
+
+    # Step 2 — wait for rendered message count to stop changing
+    deadline = time.time() + timeout_sec
+    prev_count = -1
+    stable_since = time.time()
+
+    while time.time() < deadline:
+        curr_count = _count_assistant_messages(page)
+        if curr_count != prev_count:
+            prev_count = curr_count
+            stable_since = time.time()
+        elif time.time() - stable_since >= 2.0:
+            break  # stable for 2 s → fully rendered
+        page.wait_for_timeout(500)
+
+    # Step 3 — small extra settle for any post-render animations
+    page.wait_for_timeout(1_000)
+
+
 def navigate_to_chat(chat_url: str, browser_name: str = "chrome") -> str:
     """Navigate to a specific ChatGPT chat URL."""
     page = _ensure_browser(browser_name)
@@ -376,7 +436,9 @@ def navigate_to_chat(chat_url: str, browser_name: str = "chrome") -> str:
             page.wait_for_load_state("domcontentloaded", timeout=15_000)
         except Exception:
             pass
-    page.wait_for_timeout(2_000)
+
+    # Wait for the SPA to finish rendering the conversation before returning
+    _wait_for_page_ready(page)
 
     # Verify the page loaded (look for textarea)
     el, _ = _find_textarea(page)
@@ -387,28 +449,24 @@ def navigate_to_chat(chat_url: str, browser_name: str = "chrome") -> str:
     return f"Navigated to chat: {chat_url}"
 
 
-def send_message(message: str) -> str:
-    """Type *message* into the current ChatGPT chat and submit it."""
-    global _page
-    if not _page or _page.is_closed():
-        return "Error: browser not open. Call navigate_to_chat first."
+_SEND_SELECTORS = [
+    'button[data-testid="send-button"]',
+    'button[aria-label="Send message"]',
+    'button[aria-label="Send prompt"]',
+]
 
-    el, selector = _find_textarea(_page)
+
+def _type_and_submit(page: Page, message: str) -> None:
+    """Type *message* into the textarea and click Send (or press Enter)."""
+    el, selector = _find_textarea(page)
     if not el:
-        return "Error: could not find ChatGPT input area."
+        return
+    _type_text(page, selector, message)
 
-    _type_text(_page, selector, message)
-
-    # Try clicking the send button
-    send_selectors = [
-        'button[data-testid="send-button"]',
-        'button[aria-label="Send message"]',
-        'button[aria-label="Send prompt"]',
-    ]
     sent = False
-    for sel in send_selectors:
+    for sel in _SEND_SELECTORS:
         try:
-            btn = _page.wait_for_selector(sel, timeout=3_000, state="visible")
+            btn = page.wait_for_selector(sel, timeout=3_000, state="visible")
             if btn and btn.is_enabled():
                 btn.click()
                 sent = True
@@ -417,10 +475,44 @@ def send_message(message: str) -> str:
             continue
 
     if not sent:
-        _page.keyboard.press("Enter")
+        page.keyboard.press("Enter")
 
+
+def send_message(message: str) -> str:
+    """Type *message* into the current ChatGPT chat and submit it.
+
+    If no new assistant message appears after the first attempt (which can
+    happen when the page was still hydrating), the send is automatically
+    retried once after a short wait.
+    """
+    global _page
+    if not _page or _page.is_closed():
+        return "Error: browser not open. Call navigate_to_chat first."
+
+    el, _ = _find_textarea(_page)
+    if not el:
+        return "Error: could not find ChatGPT input area."
+
+    msg_count_before = _count_assistant_messages(_page)
+
+    # ── Attempt 1 ────────────────────────────────────────────────────────────
+    _type_and_submit(_page, message)
     _page.wait_for_timeout(1_500)
-    _wait_for_generation_complete(_page)
+    _wait_for_generation_complete(_page, prev_msg_count=msg_count_before)
+
+    # ── Verify a new response appeared; if not, retry once ───────────────────
+    if _count_assistant_messages(_page) <= msg_count_before:
+        print("  [Browser] No new response after first send — page may still be loading. Retrying…")
+        # Give the page more time to finish hydrating, then try again
+        _wait_for_page_ready(_page, timeout_sec=15)
+        msg_count_before = _count_assistant_messages(_page)
+        _type_and_submit(_page, message)
+        _page.wait_for_timeout(1_500)
+        _wait_for_generation_complete(_page, prev_msg_count=msg_count_before)
+
+        if _count_assistant_messages(_page) <= msg_count_before:
+            return "Warning: Message sent but no new response detected after retry."
+
     return "Message sent; response complete."
 
 
@@ -451,54 +543,103 @@ def open_new_tab(browser_name: str = "chrome") -> Page:
     return page
 
 
+_SCAN_FOR_IMAGE_JS = """
+    () => {
+        const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
+        if (!messages.length) return null;
+        const last = messages[messages.length - 1];
+
+        // Largest loaded img (DALL-E or Matplotlib CDN image)
+        const imgs = Array.from(last.querySelectorAll('img[src]')).filter(img => {
+            const s = img.src || '';
+            return s && !s.endsWith('.svg') && img.naturalWidth > 0 && (
+                s.startsWith('blob:') ||
+                s.startsWith('https://') ||
+                s.startsWith('data:image/')
+            );
+        });
+        imgs.sort((a, b) =>
+            (b.naturalWidth * b.naturalHeight) - (a.naturalWidth * a.naturalHeight)
+        );
+        if (imgs.length) return { type: 'url', src: imgs[0].src };
+
+        // Canvas element (Matplotlib interactive chart)
+        const canvas = last.querySelector('canvas');
+        if (canvas && canvas.width > 50 && canvas.height > 50)
+            return { type: 'canvas', data: canvas.toDataURL('image/png') };
+
+        // Download link/button visible → image rendered, ready for Phase 2
+        for (const el of last.querySelectorAll('a, button')) {
+            if ((el.textContent || '').toLowerCase().includes('download'))
+                return { type: 'download_btn' };
+        }
+
+        // ChatGPT is still actively creating the image — extend the wait
+        const text = (last.textContent || '').toLowerCase();
+        const activeKeywords = [
+            'analyzing', 'creating', 'generating', 'drawing',
+            'working on', 'running', 'producing', 'rendering'
+        ];
+        if (activeKeywords.some(kw => text.includes(kw)))
+            return { type: 'creating' };
+
+        return null;
+    }
+"""
+
+
 def download_last_generated_image(save_path: str) -> bool:
     """
     Download the image from the last ChatGPT assistant message.
     Handles DALL-E (img src), Matplotlib charts (canvas or download-button click).
+
+    Uses a two-tier timeout:
+      IDLE_TIMEOUT  — give up if nothing is seen (no image AND no "creating"
+                      keyword) for this many seconds in a row.
+      MAX_WAIT      — hard cap regardless of how many "creating" signals appear.
+    When "Analyzing / Creating / Generating / …" text is detected, the idle
+    timer resets so the agent keeps waiting while ChatGPT is actively working.
+
     Returns True on success.
     """
     global _page
     if not _page or _page.is_closed():
         return False
 
-    _page.wait_for_timeout(3_000)  # let chart/image fully render
-
     import base64 as _b64
     os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
 
-    # ── Phase 1: JS-based extraction (img tag or canvas) ─────────────────────
-    result = _page.evaluate("""
-        () => {
-            const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
-            if (!messages.length) return null;
-            const last = messages[messages.length - 1];
+    # ── Poll until image/canvas/download-button appears ───────────────────────
+    MAX_WAIT_SEC  = 300   # hard 5-minute cap
+    IDLE_TIMEOUT  = 90    # give up 90 s after the last "creating" signal
 
-            // All img tags — skip SVG icons and unloaded images, prefer largest
-            const imgs = Array.from(last.querySelectorAll('img[src]')).filter(img => {
-                const s = img.src || '';
-                return s && !s.endsWith('.svg') && img.naturalWidth > 0 && (
-                    s.startsWith('blob:') ||
-                    s.startsWith('https://') ||
-                    s.startsWith('data:image/')
-                );
-            });
-            imgs.sort((a, b) =>
-                (b.naturalWidth * b.naturalHeight) - (a.naturalWidth * a.naturalHeight)
-            );
-            if (imgs.length) return { type: 'url', src: imgs[0].src };
+    result      = None
+    start       = time.time()
+    last_active = time.time()  # last time we saw any signal (image OR creating)
 
-            // Canvas element (Matplotlib interactive chart)
-            const canvas = last.querySelector('canvas');
-            if (canvas && canvas.width > 50 && canvas.height > 50) {
-                return { type: 'canvas', data: canvas.toDataURL('image/png') };
-            }
+    while time.time() - start < MAX_WAIT_SEC:
+        _page.wait_for_timeout(4_000)
+        raw = _page.evaluate(_SCAN_FOR_IMAGE_JS)
 
-            return null;
-        }
-    """)
+        if raw is None:
+            idle_for = int(time.time() - last_active)
+            if idle_for >= IDLE_TIMEOUT:
+                print("  [Browser] No image or activity detected — giving up.")
+                break
+            print(f"  [Browser] Waiting for image… ({IDLE_TIMEOUT - idle_for}s idle timeout)")
+        elif raw.get("type") == "creating":
+            last_active = time.time()
+            print("  [Browser] ChatGPT is still creating the figure, waiting…")
+        else:
+            result = raw
+            break
 
+    if result is None:
+        return False
+
+    # ── Phase 1: direct download from img src or canvas data URL ─────────────
     try:
-        if result and result.get('type') == 'url':
+        if result.get('type') == 'url':
             src = result['src']
             if src.startswith("blob:"):
                 data_url = _page.evaluate("""
@@ -521,7 +662,7 @@ def download_last_generated_image(save_path: str) -> bool:
                 f.write(img_bytes)
             return True
 
-        if result and result.get('type') == 'canvas':
+        if result.get('type') == 'canvas':
             _, b64 = result['data'].split(",", 1)
             img_bytes = _b64.b64decode(b64)
             with open(save_path, "wb") as f:
@@ -531,29 +672,66 @@ def download_last_generated_image(save_path: str) -> bool:
     except Exception as exc:
         print(f"  [Browser] JS image extraction failed: {exc}")
 
-    # ── Phase 2: Click "Download" link → modal opens → grab img from whole page ─
-    # ChatGPT's "Download Fig. X PNG" link opens a full-screen viewer, not a
-    # file download.  After it opens, the chart is a regular <img> in the DOM.
-    try:
-        clicked = _page.evaluate("""
-            () => {
-                const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
-                if (!messages.length) return false;
-                const last = messages[messages.length - 1];
-                for (const el of last.querySelectorAll('a, button')) {
-                    if (el.textContent.toLowerCase().includes('download')) {
-                        el.click();
-                        return true;
-                    }
+    # ── Phase 2: download button → share modal → click modal's Download button ─
+    # DALL-E figures: clicking the figure's download icon opens a share modal
+    # (Copy link / X / LinkedIn / Reddit / Download).  The "Download" button
+    # in that modal triggers the actual browser file-download.
+    _FIND_DOWNLOAD_BTN_JS = """
+        () => {
+            const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
+            if (!messages.length) return false;
+            const last = messages[messages.length - 1];
+            for (const el of last.querySelectorAll('a, button')) {
+                const text = (el.textContent || '').toLowerCase();
+                const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                if (text.includes('download') || aria.includes('download')) {
+                    el.click();
+                    return true;
                 }
-                return false;
             }
-        """)
+            return false;
+        }
+    """
+    # JS that clicks the "Download" button INSIDE the share modal
+    _CLICK_MODAL_DOWNLOAD_JS = """
+        () => {
+            // The share modal sits outside the message — search full document
+            const all = Array.from(document.querySelectorAll('a, button'));
+            for (const el of all) {
+                const text = (el.textContent || '').trim().toLowerCase();
+                const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                // Must be visible and say exactly "download" (not the in-message btn)
+                if ((text === 'download' || aria === 'download') && el.offsetParent !== null) {
+                    el.click();
+                    return true;
+                }
+            }
+            return false;
+        }
+    """
+    try:
+        # Step 1 — click the figure's download icon to open the share modal
+        clicked = _page.evaluate(_FIND_DOWNLOAD_BTN_JS)
 
         if clicked:
-            _page.wait_for_timeout(2_500)  # let the viewer modal render
+            _page.wait_for_timeout(2_000)  # let the share modal render
 
-            # Search the entire page for the largest loaded image
+            # Step 2 — click "Download" in the modal; capture the file download
+            try:
+                with _page.expect_download(timeout=15_000) as dl_info:
+                    modal_clicked = _page.evaluate(_CLICK_MODAL_DOWNLOAD_JS)
+
+                if modal_clicked:
+                    download = dl_info.value
+                    download.save_as(save_path)
+                    _page.keyboard.press("Escape")
+                    _page.wait_for_timeout(500)
+                    return True
+            except Exception as exc:
+                print(f"  [Browser] Modal Download button failed: {exc}")
+
+            # Fallback: the modal may contain an <img> we can read directly
+            # (used for Matplotlib viewer modals that don't trigger file-download)
             img_src = _page.evaluate("""
                 () => {
                     const imgs = Array.from(document.querySelectorAll('img[src]')).filter(img => {
@@ -591,18 +769,15 @@ def download_last_generated_image(save_path: str) -> bool:
 
                 with open(save_path, "wb") as f:
                     f.write(img_bytes)
-
-                # Close the viewer modal
                 _page.keyboard.press("Escape")
                 _page.wait_for_timeout(500)
                 return True
 
-            # Couldn't find image — close modal and give up
             _page.keyboard.press("Escape")
             _page.wait_for_timeout(500)
 
     except Exception as exc:
-        print(f"  [Browser] Figure viewer download failed: {exc}")
+        print(f"  [Browser] Figure download (Phase 2) failed: {exc}")
 
     return False
 

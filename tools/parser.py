@@ -26,8 +26,9 @@ _FIGURE_LABEL_START_RE = re.compile(
     r"^\s*(?:fig\.?|figure)\s+(\d+)\s*[.:\-–—]", re.I
 )
 
-# Standalone "Table X. Title" line (not inline prose)
-_TABLE_TITLE_RE = re.compile(r"^\s*table\s+\d+\s*[.:\-–—]?\s+\S", re.I)
+# Standalone "Table X. Title" / "Table X: Title" — separator is REQUIRED to avoid
+# matching prose like "Table 1 shows that..." as a caption.
+_TABLE_TITLE_RE = re.compile(r"^\s*table\s+\d+\s*[.:\-–—]\s*\S", re.I)
 # Strip "Table X." / "Table X:" prefix so Word's auto-number isn't duplicated
 _TABLE_LABEL_PREFIX_RE = re.compile(r"^\s*table\s+\d+\s*[.:\-–—]?\s*", re.I)
 
@@ -41,6 +42,16 @@ _STANDALONE_EQ_START_RE = re.compile(
 _LATEX_TAG_STRIP_RE = re.compile(
     r"\\tag\*?\{[^}]*\}|\\label\{[^}]*\}|\\notag\b|\\nonumber\b",
     re.IGNORECASE,
+)
+
+# Unicode characters that signal a mathematical formula (not found in normal prose)
+_MATH_UNICODE_RE = re.compile(
+    r"[∑∏∫∬∭∮∧∨∀∃∄∈∉∋⊂⊃⊆⊇⊕⊗⊙⊘∓√∞∂∇≡≅≃≈∼≜≥≤≠ℝℕℤℚℂℙ𝔼𝟙𝟘]"
+)
+# Common prose function words — their presence signals a sentence, not a formula
+_PROSE_WORD_RE = re.compile(
+    r"\b(the|a|an|is|are|was|were|be|been|have|has|to|of|in|on|at|for|with|by)\b",
+    re.I,
 )
 
 # Common LaTeX commands → Unicode for inline symbol rendering in Word
@@ -304,17 +315,32 @@ def _is_display_equation(lines: List[str]) -> bool:
 
 def _is_standalone_latex_equation(lines: List[str]) -> bool:
     """
-    True when a group is a raw LaTeX equation GPT emitted without $$ markers.
-    Catches lines like:  R = \\lambda_1 L + \\lambda_2 I + \\lambda_3 U + \\lambda_4 C \\tag{10}
+    True when a group is a mathematical equation emitted without $$ markers.
+
+    Catches two cases:
+    1. Raw LaTeX  — contains \\command and looks expression-shaped
+       e.g.  R = \\lambda_1 L + \\lambda_2 I \\tag{10}
+    2. Rendered Unicode — GPT stripped backslashes but left Unicode operators
+       e.g.  Vt = mathbb1[qt ≥ τq land pt = 1 land et ≥ τe] tag25
     """
     if not lines or len(lines) > 3:
         return False
     text = " ".join(line.strip() for line in lines if line.strip())
     if len(text) > 300:
         return False
-    if not _LATEX_CMD_RE.search(text):
-        return False
-    return bool(_STANDALONE_EQ_START_RE.match(text))
+
+    # Case 1: LaTeX backslash commands
+    if _LATEX_CMD_RE.search(text) and _STANDALONE_EQ_START_RE.match(text):
+        return True
+
+    # Case 2: Unicode math operators present, has an = sign, and not prose
+    if _MATH_UNICODE_RE.search(text) and "=" in text:
+        word_count = len(text.split())
+        prose_count = len(_PROSE_WORD_RE.findall(text))
+        if word_count <= 35 and prose_count < 3:
+            return True
+
+    return False
 
 
 def _parse_display_equation(lines: List[str]) -> Block:

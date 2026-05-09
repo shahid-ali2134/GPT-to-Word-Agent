@@ -5,3 +5,5 @@ python-dotenv>=1.0.0
 discord.py>=2.3.0
 latex2mathml>=3.22.0
 lxml>=4.9.0
+pywin32>=306
+openai>=1.0.0

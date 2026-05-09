@@ -18,8 +18,10 @@ import discord
 from discord import app_commands
 from dotenv import load_dotenv
 
+import discord_bridge
 from agent_core import (
     DEFAULT_PROJECT,
+    configure_figure_input_fn,
     finish_chapter,
     humanize_with_stealthwriter,
     recover_pending,
@@ -56,6 +58,7 @@ def _split(text: str) -> list[str]:
 class WordAgentBot(discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
+        intents.message_content = True  # required to read reply text in on_message
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
 
@@ -85,6 +88,8 @@ def _make_progress_sender(interaction: discord.Interaction, loop: asyncio.Abstra
         "Requesting",
         "Writing",
         "Continuing",
+        "Downloading",
+        "Recovering",
         "Humanizing",
         "Saving",
         "OK:",
@@ -119,6 +124,24 @@ async def on_ready():
         print("  Global slash commands synced. Discord may take a while to show them.")
 
 
+@bot.event
+async def on_message(message: discord.Message):
+    """Route any non-bot text message to a waiting agent thread (figure input)."""
+    if message.author.bot:
+        return
+    discord_bridge.deliver(message.channel.id, message.content)
+
+
+def _make_figure_input_fn(interaction: discord.Interaction, loop: asyncio.AbstractEventLoop):
+    """Create a sync callable that sends a Discord followup and waits for a user reply."""
+    channel_id = interaction.channel_id
+
+    async def _send(text: str) -> None:
+        await _send_followup(interaction, text)
+
+    return discord_bridge.make_input_fn(channel_id, _send, loop, timeout_sec=300.0)
+
+
 @bot.tree.command(
     name="writecompletechapter",
     description="Write a full chapter from ChatGPT into the Word document.",
@@ -145,7 +168,7 @@ async def write_complete_chapter_command(
         return
 
     progress = _make_progress_sender(interaction, loop)
-
+    configure_figure_input_fn(_make_figure_input_fn(interaction, loop))
     try:
         result = await loop.run_in_executor(
             executor,
@@ -159,6 +182,8 @@ async def write_complete_chapter_command(
     except Exception as exc:
         await _send_followup(interaction, f"Error: {exc}")
         raise
+    finally:
+        configure_figure_input_fn(None)
 
     await _send_followup(
         interaction,
@@ -198,7 +223,7 @@ async def write_sections_command(
         return
 
     progress = _make_progress_sender(interaction, loop)
-
+    configure_figure_input_fn(_make_figure_input_fn(interaction, loop))
     try:
         result = await loop.run_in_executor(
             executor,
@@ -212,6 +237,8 @@ async def write_sections_command(
     except Exception as exc:
         await _send_followup(interaction, f"Error: {exc}")
         raise
+    finally:
+        configure_figure_input_fn(None)
 
     await _send_followup(
         interaction,
@@ -241,7 +268,7 @@ async def finish_chapter_command(
     await interaction.response.defer(thinking=True)
     loop = asyncio.get_running_loop()
     progress = _make_progress_sender(interaction, loop)
-
+    configure_figure_input_fn(_make_figure_input_fn(interaction, loop))
     try:
         result = await loop.run_in_executor(
             executor,
@@ -254,6 +281,8 @@ async def finish_chapter_command(
     except Exception as exc:
         await _send_followup(interaction, f"Error: {exc}")
         raise
+    finally:
+        configure_figure_input_fn(None)
 
     chapter_line = f"Chapter: {result['chapter']}\n" if result["chapter"] else ""
     await _send_followup(

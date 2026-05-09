@@ -111,6 +111,61 @@ def _open_document(word_file_path: str, styles: dict) -> Document:
     return doc
 
 
+_PENDING_EQ_PREFIX = "PENDING_EQ:"
+
+# ---------------------------------------------------------------------------
+# OpenAI equation cleaning
+# ---------------------------------------------------------------------------
+
+_OPENAI_EQ_SYSTEM_PROMPT = (
+    "You are a Microsoft Word equation formatter. "
+    "Convert the input equation — which may be garbled, in LaTeX, or rendered "
+    "Unicode — into clean Microsoft Word UnicodeMath (Linear Format) as used in "
+    "the Word equation editor (Alt+=).\n\n"
+    "Rules:\n"
+    "- Subscripts with _, superscripts with ^.  Group with () when needed.\n"
+    "- Greek: use Unicode directly (α β γ δ ε ζ η θ λ μ ν π σ τ φ ψ ω etc.).\n"
+    "- Sums/products: ∑_(i=1)^n x_i  ∏_(k=1)^K p_k\n"
+    "- Integrals: ∫_a^b f(x)ⅆx\n"
+    "- Fractions: a/b or (a+b)/(c+d); complex: \\frac(num)(den)\n"
+    "- Indicator 𝟙[cond] or mathbb1[cond]: write 𝟙[condition]\n"
+    "- argmax/argmin: keep as text with subscript, e.g. argmax_(θ)\n"
+    "- land/lor → ∧/∨;  le/ge → ≤/≥;  in → ∈\n"
+    "- mathbb{R}/ℝ→ℝ  mathbb{N}→ℕ  mathbb{E}/E→𝔼  mathbb{1}/1→𝟙\n"
+    "- tau→τ  lambda→λ  epsilon→ε  theta→θ  alpha→α etc.\n"
+    "- Remove \\tag{n}, tag{n}, tagN, \\label{...}, \\nonumber, $ signs.\n"
+    "- Remove \\mathrm, \\text, \\mathbf etc. wrappers; keep their content.\n"
+    "Return ONLY the clean UnicodeMath equation. No markdown. No explanations."
+)
+
+
+def _openai_clean_equation(text: str) -> "str | None":
+    """Call OpenAI to convert a garbled/Unicode equation to Word UnicodeMath."""
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        return None
+    try:
+        import openai  # noqa: PLC0415
+        client = openai.OpenAI(api_key=api_key)
+        resp = client.chat.completions.create(
+            model=os.environ.get("OPENAI_EQ_MODEL", "gpt-4o-mini"),
+            temperature=0,
+            max_tokens=512,
+            messages=[
+                {"role": "system", "content": _OPENAI_EQ_SYSTEM_PROMPT},
+                {"role": "user", "content": text},
+            ],
+        )
+        result = resp.choices[0].message.content
+        if result:
+            return result.strip()
+    except Exception as exc:
+        print(f"  [OpenAI] equation conversion failed: {exc}")
+    return None
+
+
+# ---------------------------------------------------------------------------
+
 _OMML_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 _NARY_OPS = {"∑", "∏", "∫", "∬", "∭", "∮", "⋃", "⋂"}
 
@@ -280,29 +335,42 @@ def _latex_to_omml(latex: str):
 def _write_equation_block(doc: Document, block, styles: dict):
     """
     Write a display equation into the Word document.
-    Uses OMML (proper Word equation object) when possible; falls back to
-    centered italic LaTeX text so nothing is silently lost.
-    """
-    from docx.oxml import OxmlElement
 
+    Priority:
+    1. OMML via latex2mathml (best — proper Word equation object, no COM needed)
+    2. OpenAI → UnicodeMath PENDING_EQ: marker  (converted by _update_word_fields via COM)
+    3. Centered italic raw text fallback (readable but not an equation box)
+    """
     latex = block.latex
     if not latex:
         return
+
+    cfg = styles.get("body", {})
 
     omml = _latex_to_omml(latex)
     if omml is not None:
         para = doc.add_paragraph()
         para.alignment = WD_ALIGN_PARAGRAPH.CENTER
         para._p.append(omml)
-    else:
-        # Fallback: centered italic text with the raw LaTeX
-        cfg = styles.get("body", {})
+        return
+
+    # Try OpenAI → UnicodeMath; write PENDING_EQ: marker for COM to finish
+    linear_math = _openai_clean_equation(latex)
+    if linear_math:
         para = doc.add_paragraph()
         para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = para.add_run(latex)
+        run = para.add_run(f"{_PENDING_EQ_PREFIX}{linear_math}")
         run.font.name = cfg.get("font", "Garamond")
         run.font.size = Pt(cfg.get("size_pt", 11))
-        run.italic = True
+        return
+
+    # Final fallback: centered italic text so content is not silently dropped
+    para = doc.add_paragraph()
+    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = para.add_run(latex)
+    run.font.name = cfg.get("font", "Garamond")
+    run.font.size = Pt(cfg.get("size_pt", 11))
+    run.italic = True
 
 
 def _write_table_block(doc: Document, block, styles: dict):
@@ -444,6 +512,110 @@ def _write_figure_caption_block(doc: Document, block, styles: dict):
     _write_word_caption(doc, "Figure", caption_text)
 
 
+def _convert_pending_equations(word_doc) -> int:
+    """
+    Find PENDING_EQ: paragraphs in a live Word COM Document and convert each
+    to a proper Word OMath equation object via OMaths.Add().
+    Returns the count of equations converted.
+    """
+    prefix = _PENDING_EQ_PREFIX
+    prefix_len = len(prefix)
+    wdCharacter = 1  # Word VBA constant for character movement unit
+
+    # Collect indices first (reverse iteration avoids index shifts)
+    pending_indices = []
+    total = word_doc.Paragraphs.Count
+    for i in range(1, total + 1):
+        try:
+            if word_doc.Paragraphs(i).Range.Text.startswith(prefix):
+                pending_indices.append(i)
+        except Exception:
+            pass
+
+    converted = 0
+    for i in reversed(pending_indices):
+        try:
+            para = word_doc.Paragraphs(i)
+            full_text = para.Range.Text
+            linear_math = full_text[prefix_len:].rstrip("\r\n\x07")
+            if not linear_math.strip():
+                continue
+            rng = para.Range
+            # Exclude the paragraph mark from the range before setting text
+            rng.MoveEnd(wdCharacter, -1)
+            rng.Text = linear_math
+            rng.ParagraphFormat.Alignment = 1  # wdAlignParagraphCenter
+            word_doc.OMaths.Add(rng)
+            converted += 1
+        except Exception as exc:
+            print(f"  [Word] PENDING_EQ conversion failed at para {i}: {exc}")
+
+    return converted
+
+
+def _update_word_fields(word_file_path: str) -> None:
+    """Recalculate all SEQ / caption fields and convert PENDING_EQ equation
+    markers to real Word equation objects via COM automation.
+
+    python-docx writes SEQ fields with a cached placeholder of "1" and writes
+    PENDING_EQ: markers for equations that need Word's OMaths.Add().
+    This function opens (or reuses) the live Word instance, fixes both, and
+    saves.  Silently no-ops when pywin32 or Word is unavailable.
+    """
+    try:
+        import win32com.client  # noqa: PLC0415
+    except ImportError:
+        return  # pywin32 not installed
+
+    abs_path = os.path.abspath(word_file_path)
+    word = None
+    word_was_running = True
+    opened_here = False
+
+    try:
+        # Prefer an already-running Word instance to avoid spawning extras
+        try:
+            word = win32com.client.GetActiveObject("Word.Application")
+        except Exception:
+            word = win32com.client.Dispatch("Word.Application")
+            word_was_running = False
+            word.Visible = False
+
+        # Check whether this document is already open in Word
+        doc = None
+        try:
+            for d in word.Documents:
+                if os.path.normcase(d.FullName) == os.path.normcase(abs_path):
+                    doc = d
+                    break
+        except Exception:
+            pass
+
+        if doc is None:
+            doc = word.Documents.Open(abs_path)
+            opened_here = True
+
+        doc.Fields.Update()
+
+        converted = _convert_pending_equations(doc)
+        if converted:
+            print(f"  [Word] converted {converted} pending equation(s) to OMath objects")
+
+        doc.Save()
+
+        if opened_here:
+            doc.Close(SaveChanges=False)
+
+    except Exception as exc:
+        print(f"  [Word] COM update skipped: {exc}")
+    finally:
+        if word is not None and not word_was_running:
+            try:
+                word.Quit()
+            except Exception:
+                pass
+
+
 def append_blocks_to_word(blocks: list[Block], word_file_path: str) -> str:
     """Append pre-parsed blocks to the Word document using configured styles."""
     styles = _load_styles()
@@ -521,6 +693,7 @@ def append_blocks_to_word(blocks: list[Block], word_file_path: str) -> str:
         _write_word_caption(doc, "Table", pending_table_caption.plain_text)
 
     doc.save(word_file_path)
+    _update_word_fields(word_file_path)
     return f"OK: wrote {len(blocks)} block(s) to '{word_file_path}'"
 
 
