@@ -111,7 +111,11 @@ def _grant_default_permissions():
     if not _context:
         return
 
-    for origin in ("https://stealthwriter.ai", "https://www.stealthwriter.ai"):
+    for origin in (
+        "https://chatgpt.com",
+        "https://stealthwriter.ai",
+        "https://www.stealthwriter.ai",
+    ):
         try:
             _context.grant_permissions(
                 ["clipboard-read", "clipboard-write"],
@@ -957,6 +961,124 @@ def get_message_count() -> int:
         return 0
 
 
+def _try_copy_button(save_path: str) -> bool:
+    """Click the 'Copy response' button on the last new assistant message
+    and save the image from the Windows clipboard.
+
+    This is the simplest and most reliable approach for canvas/agent mode:
+    after generation completes the image is already rendered — no DOM scanning
+    needed.  We just click copy and grab whatever landed in the clipboard.
+
+    Returns True if an image was saved, False otherwise.
+    """
+    global _page
+    if not _page or _page.is_closed():
+        return False
+
+    import base64 as _b64
+
+    # Small settle — let the action toolbar render after generation ends
+    _page.wait_for_timeout(2_000)
+
+    # ── Find and click the Copy-response button ───────────────────────────────
+    # ChatGPT renders one "Copy response" action button per assistant message
+    # (in the toolbar row: copy, thumbs-up, thumbs-down, ...).  There is exactly
+    # one per message, so the LAST matching button on the page belongs to the
+    # most recent (figure) message.  We deliberately avoid 'button[aria-label*="copy"]'
+    # to skip "Copy code" buttons inside code blocks.
+    clicked = _page.evaluate("""
+        () => {
+            // Most-specific selectors first — these target the per-message copy action,
+            // not the "Copy code" buttons inside code blocks.
+            const selectors = [
+                '[data-testid="copy-turn-action-button"]',
+                'button[aria-label="Copy response"]',
+                'button[aria-label="Copy message"]',
+            ];
+            for (const sel of selectors) {
+                const all = Array.from(document.querySelectorAll(sel));
+                if (all.length) {
+                    // Last button = most recent message's copy action
+                    all[all.length - 1].click();
+                    return sel;  // return selector used (truthy)
+                }
+            }
+            return null;
+        }
+    """)
+
+    if not clicked:
+        print("  [Browser] _try_copy_button: copy button not found.")
+        return False
+
+    print("  [Browser] _try_copy_button: copy button clicked, reading clipboard…")
+    _page.wait_for_timeout(800)
+
+    os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+
+    # ── Try 1: PIL clipboard — image data (most common for DALL-E responses) ──
+    try:
+        from PIL import ImageGrab
+        img = ImageGrab.grabclipboard()
+        if img is not None:
+            img.save(save_path, "PNG")
+            _downloaded_figure_srcs.add(f"clipboard:{save_path}")
+            print("  [Browser] _try_copy_button: saved via PIL clipboard image.")
+            return True
+    except Exception as exc:
+        print(f"  [Browser] _try_copy_button PIL grab failed: {exc}")
+
+    # ── Try 2: clipboard text might be an image URL ───────────────────────────
+    try:
+        url = pyperclip.paste()
+        if url and url.strip().startswith("https://"):
+            url = url.strip()
+            response = _page.request.get(url)
+            if response.ok:
+                with open(save_path, "wb") as f:
+                    f.write(response.body())
+                _downloaded_figure_srcs.add(url)
+                print("  [Browser] _try_copy_button: saved via clipboard URL.")
+                return True
+    except Exception as exc:
+        print(f"  [Browser] _try_copy_button URL approach failed: {exc}")
+
+    # ── Try 3: JS read clipboard API (needs clipboard-read permission) ────────
+    try:
+        data_url = _page.evaluate("""
+            async () => {
+                try {
+                    const items = await navigator.clipboard.read();
+                    for (const item of items) {
+                        for (const type of item.types) {
+                            if (type.startsWith('image/')) {
+                                const blob = await item.getType(type);
+                                return new Promise(resolve => {
+                                    const fr = new FileReader();
+                                    fr.onloadend = () => resolve(fr.result);
+                                    fr.readAsDataURL(blob);
+                                });
+                            }
+                        }
+                    }
+                } catch (_) {}
+                return null;
+            }
+        """)
+        if data_url and isinstance(data_url, str) and "," in data_url:
+            _, b64 = data_url.split(",", 1)
+            with open(save_path, "wb") as f:
+                f.write(_b64.b64decode(b64))
+            _downloaded_figure_srcs.add(f"clipboard:{save_path}")
+            print("  [Browser] _try_copy_button: saved via JS clipboard API.")
+            return True
+    except Exception as exc:
+        print(f"  [Browser] _try_copy_button JS clipboard API failed: {exc}")
+
+    print("  [Browser] _try_copy_button: clipboard was empty or contained no image.")
+    return False
+
+
 def download_last_generated_image(
     save_path: str,
     progress=None,
@@ -1098,15 +1220,31 @@ def download_last_generated_image(
 
     if result is None:
         # Poll timed out entirely (Agent/o1 mode: JS scanner saw nothing).
-        # Try one final Phase 3 screenshot before giving up.
-        print("  [Browser] Poll timed out — trying final Phase 3 screenshot.")
+        # Try copy-response button first — image may be rendered in canvas panel
+        # even if the JS scanner couldn't see it.
+        print("  [Browser] Poll timed out — trying copy-response button.")
         if progress:
-            progress("Downloading figure… poll timed out, attempting screenshot capture.")
+            progress("Downloading figure… poll timed out, trying copy-response button.")
+        if _try_copy_button(save_path):
+            if progress:
+                progress("Downloading figure… saved via copy-response clipboard.")
+            return True
+        # Final fallback: Playwright element screenshot.
+        print("  [Browser] Trying final Phase 3 screenshot.")
         if _try_screenshot():
             if progress:
                 progress("Downloading figure… captured via screenshot.")
             return True
         return False
+
+    # ── Phase 0: copy-response button (image confirmed ready by polling loop) ──
+    # The polling loop just detected the image is rendered — this is the ideal
+    # moment to click "Copy response" and read the clipboard.
+    print("  [Browser] Image detected — trying copy-response button.")
+    if _try_copy_button(save_path):
+        if progress:
+            progress("Downloading figure… saved via copy-response clipboard.")
+        return True
 
     # ── Phase 1: direct download from img src or canvas data URL ─────────────
     try:
