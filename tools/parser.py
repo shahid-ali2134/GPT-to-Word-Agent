@@ -326,16 +326,42 @@ def _is_standalone_latex_equation(lines: List[str]) -> bool:
     """
     True when a group is a mathematical equation emitted without $$ markers.
 
-    Catches two cases:
+    Catches three cases:
     1. Raw LaTeX  — contains \\command and looks expression-shaped
        e.g.  R = \\lambda_1 L + \\lambda_2 I \\tag{10}
     2. Rendered Unicode — GPT stripped backslashes but left Unicode operators
        e.g.  Vt = mathbb1[qt ≥ τq land pt = 1 land et ≥ τe] tag25
+    3. Matrix / piecewise equations — may have stripped backslashes but are
+       identified by alignment (&) and row-break (\\) markers, or by the
+       presence of stripped matrix environment names.
     """
-    if not lines or len(lines) > 3:
+    if not lines or len(lines) > 12:
         return False
     text = " ".join(line.strip() for line in lines if line.strip())
+    if len(text) > 1200:
+        return False
+
+    # Case 3 first (most specific): matrix / piecewise / alignment equations.
+    # These are often long (failing the 300-char limit) and multi-line.
+    # Identifies them by column separators (& …) and at least one matrix keyword
+    # or row-break marker, starting with a variable-like token.
+    has_col_sep  = " & " in text or "&" in text
+    has_row_sep  = "\\\\" in text
+    has_matrix_kw = any(kw in text.lower() for kw in (
+        "beginmatrix", "begin{matrix}", "begin{pmatrix}", "begin{bmatrix}",
+        "begin{align", "begin{cases", "begin{array",
+        "endmatrix",   "end{matrix}",  "end{pmatrix}",  "end{bmatrix}",
+        "end{align",   "end{cases}",   "end{array}",
+        "left\\{", "left\\|", "left\\(",
+    ))
+    eq_start = bool(re.match(r"^[A-Za-z_\s\d(\\{]", text))
+    if eq_start and (has_matrix_kw or (has_col_sep and has_row_sep)):
+        return True
+
+    # Remaining cases apply the original (tighter) length limits.
     if len(text) > 300:
+        return False
+    if len(lines) > 3:
         return False
 
     # Case 1: LaTeX backslash commands

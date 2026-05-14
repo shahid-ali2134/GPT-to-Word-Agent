@@ -332,6 +332,40 @@ def _latex_to_omml(latex: str):
         return None
 
 
+_STRIPPED_LATEX_MAP = [
+    # Reconstruct common LaTeX environment names whose backslashes were stripped
+    # by ChatGPT's markdown renderer.  Applied before passing to latex2mathml.
+    (re.compile(r"\bleft\\?\{"),          r"\\left\\{"),
+    (re.compile(r"\bleft\\?\|"),          r"\\left|"),
+    (re.compile(r"\bleft\\?\("),          r"\\left("),
+    (re.compile(r"\bright\\?\."),         r"\\right."),
+    (re.compile(r"\bright\\?\}"),         r"\\right\\}"),
+    (re.compile(r"\bright\\?\)"),         r"\\right)"),
+    (re.compile(r"\bbeginmatrix\b"),      r"\\begin{matrix}"),
+    (re.compile(r"\bendmatrix\b"),        r"\\end{matrix}"),
+    (re.compile(r"\bbeginpmatrix\b"),     r"\\begin{pmatrix}"),
+    (re.compile(r"\bendpmatrix\b"),       r"\\end{pmatrix}"),
+    (re.compile(r"\bbegincases\b"),       r"\\begin{cases}"),
+    (re.compile(r"\bendcases\b"),         r"\\end{cases}"),
+    (re.compile(r"\bbegin\{matrix\}"),    r"\\begin{matrix}"),  # already braced
+    (re.compile(r"\bend\{matrix\}"),      r"\\end{matrix}"),
+    (re.compile(r"\bland\b"),             r"\\land "),
+    (re.compile(r"\blor\b"),              r"\\lor "),
+    (re.compile(r"\bleq\b"),              r"\\leq "),
+    (re.compile(r"\bgeq\b"),              r"\\geq "),
+    (re.compile(r"\bneq\b"),              r"\\neq "),
+    (re.compile(r"\bin\b(?!\w)"),         r"\\in "),
+    (re.compile(r"\bnotin\b"),            r"\\notin "),
+]
+
+
+def _normalize_stripped_latex(latex: str) -> str:
+    """Reconstruct backslashes stripped by ChatGPT's markdown renderer."""
+    for pattern, replacement in _STRIPPED_LATEX_MAP:
+        latex = pattern.sub(replacement, latex)
+    return latex
+
+
 def _write_equation_block(doc: Document, block, styles: dict):
     """
     Write a display equation into the Word document.
@@ -346,6 +380,10 @@ def _write_equation_block(doc: Document, block, styles: dict):
         return
 
     cfg = styles.get("body", {})
+
+    # Reconstruct backslashes that ChatGPT's markdown renderer may have stripped
+    # (e.g. "beginmatrix" → "\begin{matrix}", "land" → "\land").
+    latex = _normalize_stripped_latex(latex)
 
     omml = _latex_to_omml(latex)
     if omml is not None:

@@ -21,11 +21,13 @@ from dotenv import load_dotenv
 import discord_bridge
 from agent_core import (
     DEFAULT_PROJECT,
+    FORMATTING_INSTRUCTIONS,
     configure_figure_input_fn,
     configure_figure_interrupt_fn,
     finish_chapter,
     humanize_with_stealthwriter,
     recover_pending,
+    send_formatting_instruction,
     write_complete_chapter,
     write_complete_chapter_v2,
     write_sections,
@@ -465,6 +467,63 @@ async def humanize_command(
         raise
 
     await _send_followup(interaction, result)
+
+
+_INSTRUCT_CHOICES = [
+    app_commands.Choice(name="all — all formatting rules at once (use before starting a chapter)", value="all"),
+    app_commands.Choice(name="headings — section/subsection numbering (## X.Y, ### X.Y.Z)", value="headings"),
+    app_commands.Choice(name="prose — no bullet lists, full paragraphs", value="prose"),
+    app_commands.Choice(name="equations — LaTeX $$...$$ and $...$", value="equations"),
+    app_commands.Choice(name="figures — placement lines + sequential figure numbers", value="figures"),
+    app_commands.Choice(name="tables — Table N. caption + pipe format", value="tables"),
+    app_commands.Choice(name="length — full academic detail, no compression", value="length"),
+    app_commands.Choice(name="custom — use the message field only", value="custom"),
+]
+
+
+@bot.tree.command(
+    name="instruct",
+    description="Send a formatting reminder to ChatGPT (fix headings, equations, figures, etc.).",
+)
+@app_commands.describe(
+    topic="Which formatting rule to remind ChatGPT about",
+    message="Extra instruction appended to the preset, or the full text when topic=custom",
+    project="Project key from config.json",
+)
+@app_commands.choices(topic=_INSTRUCT_CHOICES)
+async def instruct_command(
+    interaction: discord.Interaction,
+    topic: app_commands.Choice[str],
+    message: str = "",
+    project: str = DEFAULT_PROJECT,
+):
+    await interaction.response.defer(thinking=True)
+    loop = asyncio.get_running_loop()
+    progress = _make_progress_sender(interaction, loop)
+
+    try:
+        result = await loop.run_in_executor(
+            executor,
+            lambda: send_formatting_instruction(
+                topic=topic.value,
+                project_name=project,
+                custom_message=message,
+                progress=progress,
+            ),
+        )
+    except Exception as exc:
+        await _send_followup(interaction, f"Error: {exc}")
+        raise
+
+    # Show the first 300 chars of GPT's reply so the user knows it was received
+    reply_preview = result["gpt_reply"][:300].strip()
+    if len(result["gpt_reply"]) > 300:
+        reply_preview += "…"
+
+    await _send_followup(
+        interaction,
+        f"Instruction sent (topic: **{result['topic']}**).\nChatGPT replied: {reply_preview}",
+    )
 
 
 def main():

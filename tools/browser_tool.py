@@ -343,8 +343,23 @@ def _wait_for_generation_complete(
 
         page.wait_for_timeout(1_000)
 
-    # Extra settle time
-    page.wait_for_timeout(2_000)
+    # ── Phase 3: wait for the response text to stabilise ─────────────────────
+    # The stop button disappears as soon as ChatGPT finishes *streaming*, but
+    # the React DOM may still be patching the last few tokens into the page.
+    # Poll the tail of the last response until it stops changing for 2 s so
+    # that get_last_response() never reads a partial mid-render snapshot.
+    prev_tail = ""
+    stable_since = time.time()
+    stability_deadline = time.time() + 12  # hard cap: don't block more than 12 s
+
+    while time.time() < stability_deadline:
+        curr_tail = _get_last_assistant_text(page)
+        if curr_tail != prev_tail:
+            prev_tail = curr_tail
+            stable_since = time.time()
+        elif time.time() - stable_since >= 2.0:
+            break  # unchanged for 2 s → DOM fully rendered
+        page.wait_for_timeout(400)
 
 
 def _extract_last_response(page: Page) -> str:
@@ -388,6 +403,13 @@ def _extract_last_response(page: Page) -> str:
             }
             // Skip already-consumed KaTeX sub-elements
             if (cls.includes('katex-html') || cls.includes('katex-mathml')) return '';
+
+            // Skip thinking/reasoning collapsible sections (o1 / o3 / o4-mini models).
+            // ChatGPT wraps the scratchpad in a <details> element; the summary child
+            // shows "Thinking…" and the actual reasoning text is inside — we want none of it.
+            if (tag === 'details' || tag === 'summary') return '';
+            if (cls.includes('thinking') || cls.includes('reasoning') ||
+                cls.includes('chain-of-thought') || cls.includes('scratchpad')) return '';
 
             if (tag === 'h1') { let t=''; node.childNodes.forEach(c=>{t+=walk(c);}); return '# ' + t.trim() + '\\n\\n'; }
             if (tag === 'h2') { let t=''; node.childNodes.forEach(c=>{t+=walk(c);}); return '## ' + t.trim() + '\\n\\n'; }
@@ -711,14 +733,37 @@ _SCAN_FOR_IMAGE_JS = """
         // Also exclude images inside nav/aside/header (sidebar profile picture)
         // and inside user-message containers (chat header avatar) — these are
         // never generated figures and can be large enough to pass the area filter.
+        //
+        // IMPORTANT: this scan runs BEFORE the "creating" keyword check so that
+        // a completed figure in the canvas panel is detected even when the last
+        // assistant message still contains words like "draw / creating / generating"
+        // (descriptive text that persists after generation finishes).
+        // Old figures are guarded from reuse by excludeSet, not by keyword order.
         const MIN_AREA = 10000;
         const UI_CHROME_TAGS = new Set(['nav', 'aside', 'header', 'footer']);
         function isUiChrome(el) {
+            // Exclude images whose alt text marks them as profile/avatar photos
+            const alt = (el.getAttribute ? (el.getAttribute('alt') || '') : '').toLowerCase();
+            if (alt.includes('profile') || alt.includes('avatar') ||
+                alt.includes('your photo') || alt.includes('user photo')) return true;
             let node = el.parentElement;
             while (node) {
                 const tag = (node.tagName || '').toLowerCase();
                 if (UI_CHROME_TAGS.has(tag)) return true;
-                if (node.getAttribute && node.getAttribute('data-message-author-role') === 'user') return true;
+                if (node.getAttribute) {
+                    if (node.getAttribute('data-message-author-role') === 'user') return true;
+                    // Profile / account buttons and containers (ChatGPT uses these for the
+                    // user-avatar button in the top-right corner and sidebar).
+                    const testid = (node.getAttribute('data-testid') || '').toLowerCase();
+                    if (testid.includes('profile') || testid.includes('avatar') ||
+                        testid.includes('account') || testid.includes('user-menu')) return true;
+                    // Aria-label on nav/profile containers
+                    const ariaLabel = (node.getAttribute('aria-label') || '').toLowerCase();
+                    if (ariaLabel.includes('profile') || ariaLabel.includes('account') ||
+                        ariaLabel.startsWith('your ')) return true;
+                    // Explicit navigation role
+                    if ((node.getAttribute('role') || '').toLowerCase() === 'navigation') return true;
+                }
                 node = node.parentElement;
             }
             return false;
@@ -736,18 +781,22 @@ _SCAN_FOR_IMAGE_JS = """
         }
         if (bestSrc) return { type: 'url', src: bestSrc };
 
-        // Only check "creating" keywords in the very last message so an older
-        // figure in a previous message doesn't suppress the active-creation signal.
-        const last = messages[messages.length - 1];
-        const text = (last.textContent || '').toLowerCase();
-        const activeKeywords = [
-            'analyzing', 'creating', 'generating', 'drawing',
-            'working on', 'running', 'producing', 'rendering', 'one last tweak',
-            'creating image', 'sketching it out', 'adding final touches',
-            'making first draft', 'publishing details'
-        ];
-        if (activeKeywords.some(kw => text.includes(kw)))
-            return { type: 'creating' };
+        // ── "Creating" keyword check — only reached when canvas scan found nothing ──
+        // If the last assistant message contains an active-generation keyword,
+        // ChatGPT is still drawing the new figure and the canvas panel shows
+        // the previous (excluded) figure.  Signal the polling loop to keep waiting.
+        {
+            const last = messages[messages.length - 1];
+            const lastText = (last.textContent || '').toLowerCase();
+            const activeKeywords = [
+                'analyzing', 'creating', 'generating', 'drawing',
+                'working on', 'running', 'producing', 'rendering', 'one last tweak',
+                'creating image', 'sketching it out', 'adding final touches',
+                'making first draft', 'publishing details'
+            ];
+            if (activeKeywords.some(kw => lastText.includes(kw)))
+                return { type: 'creating' };
+        }
 
         return null;
     }
@@ -817,11 +866,27 @@ def screenshot_figure(save_path: str, baseline_msg_count: int = 0) -> bool:
             // user-message containers (chat header avatar).
             const UI_CHROME_TAGS = new Set(['nav', 'aside', 'header', 'footer']);
             function isUiChrome(el) {
+                // Exclude images whose alt text marks them as profile/avatar photos
+                const alt = (el.getAttribute ? (el.getAttribute('alt') || '') : '').toLowerCase();
+                if (alt.includes('profile') || alt.includes('avatar') ||
+                    alt.includes('your photo') || alt.includes('user photo')) return true;
                 let node = el.parentElement;
                 while (node) {
                     const tag = (node.tagName || '').toLowerCase();
                     if (UI_CHROME_TAGS.has(tag)) return true;
-                    if (node.getAttribute && node.getAttribute('data-message-author-role') === 'user') return true;
+                    if (node.getAttribute) {
+                        if (node.getAttribute('data-message-author-role') === 'user') return true;
+                        // Profile / account buttons and containers
+                        const testid = (node.getAttribute('data-testid') || '').toLowerCase();
+                        if (testid.includes('profile') || testid.includes('avatar') ||
+                            testid.includes('account') || testid.includes('user-menu')) return true;
+                        // Aria-label on nav/profile containers
+                        const ariaLabel = (node.getAttribute('aria-label') || '').toLowerCase();
+                        if (ariaLabel.includes('profile') || ariaLabel.includes('account') ||
+                            ariaLabel.startsWith('your ')) return true;
+                        // Explicit navigation role
+                        if ((node.getAttribute('role') || '').toLowerCase() === 'navigation') return true;
+                    }
                     node = node.parentElement;
                 }
                 return false;
@@ -1112,6 +1177,34 @@ def download_last_generated_image(
     import base64 as _b64
     os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
 
+    # ── Pre-scan: snapshot every currently-visible large image src ───────────
+    # Add all large images visible RIGHT NOW (before generation starts) to
+    # _downloaded_figure_srcs so the canvas-panel scan never returns a stale
+    # figure regardless of how the previous figure was downloaded (copy button,
+    # direct URL, download-button click, or Playwright screenshot).
+    try:
+        pre_srcs = _page.evaluate("""
+            () => {
+                const MIN = 10000;
+                const out = [];
+                for (const img of document.querySelectorAll('img[src]')) {
+                    const s = img.src || '';
+                    if (!s || s.endsWith('.svg')) continue;
+                    if (!s.startsWith('blob:') && !s.startsWith('https://') &&
+                        !s.startsWith('data:image/')) continue;
+                    if (img.naturalWidth * img.naturalHeight >= MIN)
+                        out.push(s);
+                }
+                return out;
+            }
+        """)
+        if pre_srcs:
+            for s in pre_srcs:
+                _downloaded_figure_srcs.add(s)
+            print(f"  [Browser] Pre-scan: excluded {len(pre_srcs)} existing image(s) from future canvas scans.")
+    except Exception:
+        pass
+
     # ── Phase 3 helper — element screenshot (works in any ChatGPT mode) ──────
     # Defined early so it can be called both periodically and on timeout.
     # In Agent/o1 mode the JS scanner cannot see the image through evaluate(),
@@ -1242,6 +1335,10 @@ def download_last_generated_image(
     # moment to click "Copy response" and read the clipboard.
     print("  [Browser] Image detected — trying copy-response button.")
     if _try_copy_button(save_path):
+        # Register the actual image src (not just the clipboard path) so that
+        # the next figure's scan never mistakes this figure for the new one.
+        if result and result.get('type') == 'url' and result.get('src'):
+            _downloaded_figure_srcs.add(result['src'])
         if progress:
             progress("Downloading figure… saved via copy-response clipboard.")
         return True

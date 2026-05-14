@@ -30,6 +30,13 @@ INTRO_PROMPT_TEMPLATE = (
     "Do not include any disclaimers, notes, or meta-commentary about the instructions."
 )
 CONTINUE_PROMPT = "continue to the next section!"
+# Used by _fetch_complete only when a response is genuinely truncated at GPT's
+# token limit (not a mid-stream read).  Avoids "next section" so GPT finishes
+# the current section before moving on.
+COMPLETE_TRUNCATED_PROMPT = (
+    "The response was cut off mid-sentence. "
+    "Please continue writing from exactly where you left off and complete the current section."
+)
 CONCLUDE_CHAPTER_PROMPT = (
     "Continue to the next section! But as we are at the end of section so lets "
     "conclude the section properly! Only write the main sections now!"
@@ -37,6 +44,220 @@ CONCLUDE_CHAPTER_PROMPT = (
 MAX_CHAPTER_STEPS = 40
 MAX_FINISH_STEPS = 40
 SECTION_DONE_MARKER = "[SECTION_WORKFLOW_COMPLETE]"
+
+# ── Formatting instructions sent to ChatGPT via /instruct ────────────────────
+# These are written to match the ACTUAL parser logic in tools/parser.py:
+#   • heading2 = ## X.Y Title  (HEADING2_NUMBER_RE strips the number for Word)
+#   • heading3 = ### X.Y.Z Title (HEADING3_NUMBER_RE strips the number for Word)
+#   • No heading4 — config.json only defines chapter/heading2/heading3/body
+#   • Tables: any markdown pipe table works (JS extractor converts | to \t)
+#     Caption must be on its own line BEFORE the table as "Table N. Title" or "Table N: Title"
+#   • Figures: write "Placement: Insert Figure N here." to trigger figure_placeholder;
+#     the agent then sends "Draw figure N please!" to ChatGPT automatically.
+#     Figure numbers are sequential across the whole book (1, 2, 3 … 12 …), not chapter-based.
+#   • Equations: $$...$$ display, $...$ inline — JS extractor reads KaTeX annotation tags
+
+_INSTRUCT_HEADINGS = """\
+From now on, always number every section and subsection heading using decimal notation:
+
+• Level 2 sections use double-hash:   ## X.Y  Title
+  Example: ## 3.1  Introduction to the Framework
+
+• Level 3 subsections use triple-hash: ### X.Y.Z  Title
+  Example: ### 3.1.1  Core Definitions
+
+Rules:
+- Always include the number prefix before the title.
+- Do NOT write unnumbered headings.
+- Do NOT go deeper than X.Y.Z (three levels is the maximum).
+- The number will be stripped and replaced by the Word document's own numbering, so include it anyway for clarity.\
+"""
+
+_INSTRUCT_PROSE = """\
+From now on, write all body content as continuous prose paragraphs:
+
+• Do NOT use bullet points, dashes, or numbered lists inside the body text.
+• Each subsection should contain at least 3–4 full paragraphs.
+• Every paragraph should be 4–6 sentences minimum.
+• Reserve bullet lists only for explicitly enumerable items (e.g. a comparison table or step-by-step procedure) — and even then, prefer prose.
+• Do NOT begin a response with a preamble like "Here is section 3.1:" — start directly with the heading.\
+"""
+
+_INSTRUCT_EQUATIONS = """\
+From now on, write every mathematical expression using LaTeX syntax:
+
+• Display equations (on their own line, centred):
+  Wrap with double dollar signs:  $$  equation  $$
+
+• Inline expressions embedded in a sentence:
+  Wrap with single dollar signs:  $  expression  $
+
+• Use full LaTeX backslash commands inside the delimiters:
+  \\frac{a}{b}   \\sum_{i=1}^{n}   \\begin{matrix} ... \\end{matrix}
+  \\mathbb{R}    \\mathcal{L}      \\alpha \\beta \\gamma \\delta
+  \\left\\{ ... \\right\\}   \\begin{cases} ... \\end{cases}
+
+• NEVER write equations as plain text, Unicode math symbols (×, ∑, ∈, ≤), or words.\
+"""
+
+_INSTRUCT_LENGTH = """\
+From now on, write every section and subsection in full academic depth:
+
+• Every subsection must be at least 3–4 complete paragraphs — never a single-paragraph stub.
+• Do NOT summarize or compress — expand every concept with:
+    1. A precise definition
+    2. A clear explanation of why it matters
+    3. At least one concrete example or application
+    4. Its relationship to other concepts in the chapter
+• If your response is approaching the length limit, finish the current paragraph cleanly and stop there.
+• Do NOT truncate a sentence — always end on a full stop.\
+"""
+
+_INSTRUCT_FIGURES = """\
+From now on, follow this exact figure protocol:
+
+Step 1 — placement line (where the figure goes in the text):
+  Write on its own line:   Placement: Insert Figure N here.
+  Example:                 Placement: Insert Figure 12 here.
+
+Step 2 — caption line (immediately after the placement line):
+  Write:   Fig. N. [Descriptive caption text ending with a period.]
+  Example: Fig. 12. Core components of the agentic ML pipeline.
+
+Rules:
+• Figure numbers are SEQUENTIAL across the whole book (e.g. 10, 11, 12 …), NOT chapter-based (not 3.1, 3.2).
+• The agent will automatically ask ChatGPT to draw the figure after detecting the placement line.
+• Do NOT write "Draw Figure N" — that command is sent automatically by the agent.
+• Do NOT use placeholder text like [Figure N] or (see figure below).\
+"""
+
+_INSTRUCT_TABLES = """\
+From now on, follow this exact table protocol:
+
+Step 1 — caption line (ABOVE the table):
+  Write:   Table N. [Title of the table.]    — or —    Table N: [Title]
+  Example: Table 3. Comparison of agentic architectures.
+
+Step 2 — the table itself (immediately below the caption):
+  Use standard markdown pipe format with a header separator row:
+  | Column A | Column B | Column C |
+  |----------|----------|----------|
+  | value    | value    | value    |
+
+Rules:
+• Table numbers are sequential within the chapter (Table 1, Table 2, …).
+• Do NOT put the caption inside a table cell.
+• Do NOT use plain-text tab-separated tables — use the pipe (|) format.\
+"""
+
+_INSTRUCT_ALL = """\
+Before I give you the next section to write, please confirm you will follow ALL of these formatting rules for every response in this session:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HEADINGS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Level 2 sections:    ## X.Y  Title      (e.g., ## 3.1  Overview)
+• Level 3 subsections: ### X.Y.Z  Title   (e.g., ### 3.1.1  Definitions)
+• Always include the decimal number prefix.
+• Maximum depth is X.Y.Z — no deeper.
+• Do NOT write unnumbered headings.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROSE STYLE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Write body content as continuous prose paragraphs — no bullet points or lists in the main text.
+• Each subsection must have at least 3–4 full paragraphs (minimum 4–6 sentences each).
+• Do NOT start a response with "Here is section X.Y:" — begin directly with the heading.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MATHEMATICAL EQUATIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Display equations (own line): $$  LaTeX  $$
+• Inline expressions:           $  LaTeX  $
+• Use full LaTeX: \\frac{a}{b}, \\sum_{i=1}^{n}, \\begin{matrix}…\\end{matrix}, \\mathbb{R}, etc.
+• NEVER use plain-text math or Unicode symbols (∑, ×, ∈, ≤…).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FIGURES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Where a figure belongs, write a placement line on its own:
+    Placement: Insert Figure N here.
+• Immediately after, write the caption:
+    Fig. N. [Caption text ending in a period.]
+• Figure numbers are SEQUENTIAL across the whole book (e.g., 10, 11, 12 …).
+• Do NOT write "Draw Figure N" — the agent handles that automatically.
+• Do NOT use placeholder text like [Figure N].
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TABLES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Write the caption on its own line ABOVE the table:
+    Table N. [Title]    — or —    Table N: [Title]
+• Use standard markdown pipe format with a header separator row.
+• Table numbers are sequential within the chapter (Table 1, Table 2, …).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+COMPLETENESS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Write each section completely — do not cut off mid-sentence.
+• If approaching the length limit, end at a clean paragraph boundary.
+• Do NOT summarize or compress — write every concept in full detail.
+
+Please reply with "Understood." to confirm.\
+"""
+
+FORMATTING_INSTRUCTIONS: dict[str, str] = {
+    "headings":  _INSTRUCT_HEADINGS,
+    "prose":     _INSTRUCT_PROSE,
+    "equations": _INSTRUCT_EQUATIONS,
+    "length":    _INSTRUCT_LENGTH,
+    "figures":   _INSTRUCT_FIGURES,
+    "tables":    _INSTRUCT_TABLES,
+    "all":       _INSTRUCT_ALL,
+}
+
+
+def send_formatting_instruction(
+    topic: str,
+    project_name: str = DEFAULT_PROJECT,
+    custom_message: str = "",
+    progress=None,
+) -> dict:
+    """Send a formatting reminder to ChatGPT for the given project.
+
+    topic         — key in FORMATTING_INSTRUCTIONS, or 'custom' to use custom_message only.
+    custom_message — appended to a preset instruction, or used alone when topic='custom'.
+    Returns a dict with 'topic', 'instruction_sent', and 'gpt_reply'.
+    """
+    project = get_project(project_name)
+
+    if progress:
+        progress(f"Opening ChatGPT chat for project '{project_name}'.")
+    navigate_result = navigate_to_chat(project["chat_url"], project.get("browser", "chrome"))
+    if navigate_result.lower().startswith(("warning", "error")):
+        raise RuntimeError(navigate_result)
+
+    if topic == "custom":
+        instruction = custom_message.strip()
+    else:
+        instruction = FORMATTING_INSTRUCTIONS.get(topic, "")
+        if custom_message.strip():
+            instruction = instruction + "\n\n" + custom_message.strip()
+
+    if not instruction:
+        raise ValueError(f"No instruction text for topic '{topic}' and no custom_message provided.")
+
+    if progress:
+        progress(f"Sending '{topic}' formatting instruction to ChatGPT.")
+    send_message(instruction, progress=progress)
+    reply = get_last_response()
+
+    return {
+        "topic": topic,
+        "instruction_sent": instruction,
+        "gpt_reply": reply,
+    }
+
 
 # ── Figure manual-download bridge ─────────────────────────────────────────────
 # Set by discord_bot.py before running any chapter command.  When set, the agent
@@ -132,11 +353,6 @@ def _resolve_figures(
     report = progress or (lambda msg: None)
     figures_dir = os.path.join(os.path.dirname(os.path.abspath(word_file_path)), "figures")
     os.makedirs(figures_dir, exist_ok=True)
-
-    # Reset the downloaded-src exclusion set so every chapter starts fresh.
-    # This prevents the canvas panel's lingering image from being returned for
-    # a subsequent figure when the page-wide fallback is used.
-    clear_figure_src_cache()
 
     result = list(blocks)
     for i, block in enumerate(result):
@@ -351,6 +567,89 @@ def _strip_gpt_preamble(text: str) -> str:
     return "\n\n".join(paragraphs).strip()
 
 
+def _is_thinking_response(text: str) -> bool:
+    """Return True when *text* looks like a reasoning/thinking indicator rather than real content.
+
+    Reasoning models (o1, o3, o4-mini) sometimes leak their scratchpad text
+    through the DOM walker.  If we detect that the response is essentially
+    just a thinking marker we skip humanization and Word writing entirely.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return True
+    if len(stripped) < 80:
+        # Very short response consisting only of reasoning noise words
+        if re.match(
+            r"^(thinking|reasoning|analyzing|processing|working on it|"
+            r"let me think|I'?m thinking|one moment)\.{0,3}$",
+            stripped, re.I,
+        ):
+            return True
+    return False
+
+
+def _concat_dedup(base: str, continuation: str) -> str:
+    """Concatenate *base* + *continuation*, removing a repeated leading heading.
+
+    When GPT truncates mid-section and is asked to continue, it often re-states
+    the section heading at the start of the continuation.  This removes that
+    duplicate so the heading does not appear twice in the Word document.
+
+    Also handles mid-word splits: if the base ends without whitespace or sentence
+    punctuation (e.g. ends with "ge") and the continuation starts with a lowercase
+    letter (e.g. "nerate…"), the two fragments are joined directly (no paragraph
+    break) so "generate" is reconstructed rather than split across paragraphs.
+    """
+    if not continuation or not continuation.strip():
+        return base
+
+    # Find the last heading block in *base*
+    last_heading = None
+    for block in reversed(parse_markdown(base)):
+        if block.block_type in ("chapter", "heading2", "heading3"):
+            last_heading = block.plain_text.strip().lower()
+            break
+
+    if last_heading:
+        groups = re.split(r"\n{2,}", continuation.strip())
+        if groups:
+            first_clean = re.sub(r"^#{1,4}\s*", "", groups[0]).strip().lower()
+            if first_clean == last_heading:
+                groups = groups[1:]
+                continuation = "\n\n".join(groups).strip()
+
+    # Mid-word join: base ends on an incomplete word fragment and continuation
+    # starts with a lowercase letter — glue directly without inserting a newline.
+    base_tail = base.rstrip()
+    cont_head = continuation.lstrip()
+    if (base_tail and cont_head
+            and not re.search(r'[\s.!?)\]"`\'»—,;:]$', base_tail)
+            and cont_head[0].islower()):
+        return (base_tail + cont_head).strip()
+
+    return (base + "\n\n" + continuation).strip()
+
+
+def _fetch_complete(response: str, progress=None, max_extra: int = 3) -> str:
+    """If *response* is truncated, silently continue and merge until complete.
+
+    Sends up to *max_extra* COMPLETE_TRUNCATED_PROMPT messages (NOT the normal
+    "next section" prompt — that would make GPT skip ahead instead of finishing
+    the current section).  Each continuation is merged via _concat_dedup so the
+    final result is a single coherent block.  The merged response is what gets
+    written to Word — no duplicate or truncated sections.
+    """
+    for _ in range(max_extra):
+        if not _is_response_truncated(response) or _contains_chapter_summary(response):
+            break
+        if progress:
+            progress("Response appears cut off — fetching continuation to complete the current section.")
+        send_message(COMPLETE_TRUNCATED_PROMPT, progress=progress)
+        cont = _strip_gpt_preamble(get_last_response())
+        response = _concat_dedup(response, cont)
+    return response
+
+
 def _demote_chapter_to_heading2(blocks: list[Block]) -> list[Block]:
     """Demote all chapter-level blocks to heading2 (for section/continue responses)."""
     return [Block("heading2", b.runs) if b.block_type == "chapter" else b for b in blocks]
@@ -374,21 +673,26 @@ def _fix_extra_chapter_blocks(blocks: list[Block]) -> list[Block]:
 
 def _normalize_chapter_opening(blocks: list[Block], chapter_title: str) -> list[Block]:
     """
-    Remove GPT's 'Chapter X' label block and any duplicate chapter title heading
-    so that _prepend_chapter_heading can cleanly add the correct Heading 1 block.
+    Remove GPT's chapter label block(s) so _prepend_chapter_heading can add the
+    correct clean title from the outline.
 
-    GPT often outputs:  # Chapter 2 (bare label)  +  ## From Predictive Models... (real title)
-    Both need to be removed before the correct title from the outline is prepended.
+    GPT commonly outputs one or both of:
+      # Chapter 2                        ← bare label (no title)
+      # Chapter 2: From Automation …     ← label + title (must ALSO be removed)
+      ## From Automation to Agency       ← title repeated as heading2
+    All of these are stripped; _prepend_chapter_heading then adds the clean title.
     """
     result = list(blocks)
 
-    # Remove a bare "Chapter X" chapter block that has no real title
-    if result and result[0].block_type == "chapter":
-        m = CHAPTER_TITLE_RE.match(result[0].plain_text.strip())
-        if m and not m.group(1).strip():
+    # Remove every leading chapter block whose text matches "Chapter N[: ...]"
+    # — covers both the bare label and the "Chapter N: Title" variant.
+    while result and result[0].block_type == "chapter":
+        if CHAPTER_TITLE_RE.match(result[0].plain_text.strip()):
             result.pop(0)
+        else:
+            break  # not a "Chapter N" pattern → keep
 
-    # Remove a leading heading that is just the chapter title (GPT put the title as a subheading)
+    # Remove a leading heading2/3 that exactly duplicates the chapter title
     if result and result[0].block_type in ("heading2", "heading3"):
         block_text = result[0].plain_text.strip().lower()
         title_text = chapter_title.strip().lower()
@@ -424,8 +728,16 @@ def _is_response_truncated(text: str) -> bool:
     if not lines:
         return False
     last = lines[-1].strip()
-    # Ends with sentence punctuation, closing bracket/quote, code-fence, or heading marker
-    return not re.search(r'[.!?)\]"`\'»—]$|^#{1,4}\s|```$|\*{3}$', last)
+    # Ends with sentence punctuation, closing bracket/quote, code-fence,
+    # equation delimiters ($$), or heading/list marker.
+    return not re.search(
+        r'[.!?)\]"`\'»—]$'   # sentence punctuation and closers
+        r'|\$\$$'             # display-equation closing $$
+        r'|^#{1,4}\s'         # heading line
+        r'|```$'              # code fence
+        r'|\*{3}$',           # bold/italic closer
+        last,
+    )
 
 
 def _contains_chapter_summary(content: str) -> bool:
@@ -514,6 +826,8 @@ def _is_math_body(text: str) -> bool:
 def _humanize_for_word(text: str, project: dict, progress=None) -> list[Block]:
     if not text or not text.strip():
         return []
+    if _is_thinking_response(text):
+        return []  # reasoning/thinking scratchpad — not real content
 
     original_blocks = parse_markdown(text)
     if not original_blocks:
@@ -605,6 +919,10 @@ def write_complete_chapter(
         if progress:
             progress(message)
 
+    # Reset figure-src exclusion list once per chapter so cross-section deduplication works.
+    # (Clearing inside _resolve_figures was wrong — it wiped Figure 1's src before Figure 2.)
+    clear_figure_src_cache()
+
     report(f"Opening ChatGPT chat for project '{project_name}'.")
     navigate_result = navigate_to_chat(project["chat_url"], project.get("browser", "chrome"))
     if navigate_result.lower().startswith(("warning", "error")):
@@ -618,7 +936,7 @@ def write_complete_chapter(
     intro_prompt = build_intro_prompt(chapter_number, chapter_outline)
     report("Writing the introductory paragraphs.")
     send_message(intro_prompt, progress=progress)
-    response = _strip_gpt_preamble(get_last_response())
+    response = _fetch_complete(_strip_gpt_preamble(get_last_response()), report)
     blocks_for_word = _humanize_for_word(response, project, report)
     blocks_for_word = _normalize_chapter_opening(blocks_for_word, chapter_title)
     blocks_for_word = _prepend_chapter_heading(blocks_for_word, chapter_title)
@@ -644,7 +962,9 @@ def write_complete_chapter(
 
         report(f"Continuing to the next section ({written_sections + 1}).")
         send_message(next_prompt, progress=progress)
-        response = _strip_gpt_preamble(get_last_response())
+        # Merge any truncated continuation before writing — prevents the same
+        # section heading from appearing twice in the Word document.
+        response = _fetch_complete(_strip_gpt_preamble(get_last_response()), report)
         blocks_for_word = _humanize_for_word(response, project, report)
         blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
         blocks_for_word = _resolve_figures(blocks_for_word, word_file_path, report)
@@ -696,6 +1016,8 @@ def write_complete_chapter_v2(
         if progress:
             progress(message)
 
+    clear_figure_src_cache()
+
     report(f"Opening ChatGPT chat for project '{project_name}'.")
     navigate_result = navigate_to_chat(project["chat_url"], project.get("browser", "chrome"))
     if navigate_result.lower().startswith(("warning", "error")):
@@ -710,7 +1032,7 @@ def write_complete_chapter_v2(
     intro_prompt = build_intro_prompt(chapter_number, chapter_outline)
     report("Writing the introductory paragraphs.")
     send_message(intro_prompt, progress=progress)
-    response = _strip_gpt_preamble(get_last_response())
+    response = _fetch_complete(_strip_gpt_preamble(get_last_response()), report)
     blocks = _humanize_for_word(response, project, report)
     blocks = _normalize_chapter_opening(blocks, chapter_title)
     blocks = _prepend_chapter_heading(blocks, chapter_title)
@@ -735,7 +1057,7 @@ def write_complete_chapter_v2(
 
         report(f"Continuing to the next section ({written_sections + 1}).")
         send_message(next_prompt, progress=progress)
-        response = _strip_gpt_preamble(get_last_response())
+        response = _fetch_complete(_strip_gpt_preamble(get_last_response()), report)
         blocks = _humanize_for_word(response, project, report)
         blocks = _demote_chapter_to_heading2(blocks)
         blocks = _resolve_figures(blocks, word_file_path, report)
@@ -797,6 +1119,8 @@ def write_sections(
         if progress:
             progress(message)
 
+    clear_figure_src_cache()
+
     report(f"Opening ChatGPT chat for project '{project_name}'.")
     navigate_result = navigate_to_chat(project["chat_url"], project.get("browser", "chrome"))
     if navigate_result.lower().startswith(("warning", "error")):
@@ -804,7 +1128,7 @@ def write_sections(
 
     report("Writing the requested section outline.")
     send_message(build_section_prompt(chapter_number, sections_outline), progress=progress)
-    response = _strip_gpt_preamble(get_last_response())
+    response = _fetch_complete(_strip_gpt_preamble(get_last_response()), report)
     response_for_word = _strip_done_marker(response)
     blocks_for_word = _humanize_for_word(response_for_word, project, report)
     blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
@@ -822,7 +1146,7 @@ def write_sections(
 
         report(f"Continuing requested sections ({written_responses + 1}).")
         send_message(CONTINUE_SECTION_PROMPT, progress=progress)
-        response = _strip_gpt_preamble(get_last_response())
+        response = _fetch_complete(_strip_gpt_preamble(get_last_response()), report)
         response_for_word = _strip_done_marker(response)
         blocks_for_word = _humanize_for_word(response_for_word, project, report)
         blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
@@ -872,6 +1196,8 @@ def finish_chapter(
         if progress:
             progress(message)
 
+    clear_figure_src_cache()
+
     report(f"Opening ChatGPT chat for project '{project_name}'.")
     navigate_result = navigate_to_chat(project["chat_url"], project.get("browser", "chrome"))
     if navigate_result.lower().startswith(("warning", "error")):
@@ -888,7 +1214,7 @@ def finish_chapter(
 
         report(f"Continuing to the next section ({written_sections + 1}).")
         send_message(CONTINUE_PROMPT, progress=progress)
-        response = _strip_gpt_preamble(get_last_response())
+        response = _fetch_complete(_strip_gpt_preamble(get_last_response()), report)
 
         blocks_for_word = _humanize_for_word(response, project, report)
         blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
@@ -910,7 +1236,7 @@ def finish_chapter(
 
             # The concluding response may itself be truncated — keep going until done.
             while True:
-                response = _strip_gpt_preamble(get_last_response())
+                response = _fetch_complete(_strip_gpt_preamble(get_last_response()), report)
                 blocks_for_word = _humanize_for_word(response, project, report)
                 blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
                 blocks_for_word = _resolve_figures(blocks_for_word, word_file_path, report)
