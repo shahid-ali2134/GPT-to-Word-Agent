@@ -304,9 +304,13 @@ def _wait_for_generation_complete(
     ]
     combined = ", ".join(stop_selectors)
 
-    # ── Phase 1: wait until a NEW assistant message node appears (up to 45 s) ──
-    # Heavy chats can take 20-30 s before ChatGPT even starts streaming.
-    new_msg_deadline = time.time() + 45
+    # ── Phase 1: wait until a NEW assistant message node appears (up to 3 min) ──
+    # Heavy/long chats can take 60-120 s before ChatGPT even starts streaming
+    # because the model must process the full context before generating the first token.
+    P1_TIMEOUT = 180
+    p1_start = time.time()
+    new_msg_deadline = p1_start + P1_TIMEOUT
+    last_p1_reported = 0.0
     while time.time() < new_msg_deadline:
         if _count_assistant_messages(page) > prev_msg_count:
             break
@@ -315,6 +319,14 @@ def _wait_for_generation_complete(
                 break
         except Exception:
             pass
+        now = time.time()
+        p1_elapsed = int(now - p1_start)
+        if progress and p1_elapsed >= 30 and now - last_p1_reported >= 30:
+            progress(
+                f"Waiting for ChatGPT to start responding… "
+                f"({p1_elapsed}s elapsed, up to {P1_TIMEOUT - p1_elapsed}s remaining)"
+            )
+            last_p1_reported = now
         page.wait_for_timeout(500)
 
     # ── Phase 2: wait for the stop button to disappear (generation done) ──────
@@ -483,8 +495,9 @@ def _wait_for_page_ready(page: Page, timeout_sec: int = 30) -> None:
       3. Hard cap of *timeout_sec* seconds so we never block forever.
     """
     # Step 1 — network idle (API responses received)
+    # Allow up to 40 s for slow/heavy chats whose context fetch takes longer.
     try:
-        page.wait_for_load_state("networkidle", timeout=min(timeout_sec * 1_000, 20_000))
+        page.wait_for_load_state("networkidle", timeout=min(timeout_sec * 1_000, 40_000))
     except Exception:
         pass  # timeout is fine — we'll still do the stability check
 
