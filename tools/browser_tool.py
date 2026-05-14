@@ -489,34 +489,25 @@ def _wait_for_page_ready(page: Page, timeout_sec: int = 30) -> None:
     hydrated it causes the text to be silently discarded.
 
     Strategy:
-      1. Wait for network to go idle (API calls complete).
-      2. Poll until the assistant-message count is stable for 2 s, meaning
-         the conversation render is done.
-      3. Hard cap of *timeout_sec* seconds so we never block forever.
+      1. Wait for network to go idle — this means all message data has been
+         fetched from the API.  Once networkidle fires, the remaining work is
+         local React rendering which completes in under a second.
+      2. A short fixed pause (1.5 s) for React to paint the final DOM nodes.
+
+    We deliberately do NOT poll the assistant-message count for stability.
+    In a long chat (200+ messages) ChatGPT renders messages progressively and
+    the count changes continuously for 30+ seconds, which used to cause this
+    function to block for the full timeout_sec window on every call.
     """
-    # Step 1 — network idle (API responses received)
-    # Allow up to 40 s for slow/heavy chats whose context fetch takes longer.
+    # Step 1 — network idle: all API responses (message history) received.
+    # Cap at 40 s for very slow / heavy chats.
     try:
         page.wait_for_load_state("networkidle", timeout=min(timeout_sec * 1_000, 40_000))
     except Exception:
-        pass  # timeout is fine — we'll still do the stability check
+        pass  # timed out — React may still be rendering, fixed pause handles it
 
-    # Step 2 — wait for rendered message count to stop changing
-    deadline = time.time() + timeout_sec
-    prev_count = -1
-    stable_since = time.time()
-
-    while time.time() < deadline:
-        curr_count = _count_assistant_messages(page)
-        if curr_count != prev_count:
-            prev_count = curr_count
-            stable_since = time.time()
-        elif time.time() - stable_since >= 2.0:
-            break  # stable for 2 s → fully rendered
-        page.wait_for_timeout(500)
-
-    # Step 3 — small extra settle for any post-render animations
-    page.wait_for_timeout(1_000)
+    # Step 2 — brief fixed settle so React finishes painting
+    page.wait_for_timeout(1_500)
 
 
 def _normalise_url(url: str) -> str:
