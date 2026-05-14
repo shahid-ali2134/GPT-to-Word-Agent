@@ -263,9 +263,7 @@ def send_formatting_instruction(
     navigate_result = navigate_to_chat(
         project["chat_url"],
         project.get("browser", "chrome"),
-        extra_wait_sec=int(project.get("chat_load_wait_sec", 0)),
         progress=progress,
-        interrupt_fn=_figure_interrupt_fn,
     )
     if navigate_result.lower().startswith(("warning", "error")):
         raise RuntimeError(navigate_result)
@@ -960,9 +958,7 @@ def write_complete_chapter(
     navigate_result = navigate_to_chat(
         project["chat_url"],
         project.get("browser", "chrome"),
-        extra_wait_sec=int(project.get("chat_load_wait_sec", 0)),
         progress=progress,
-        interrupt_fn=_figure_interrupt_fn,
     )
     if navigate_result.lower().startswith(("warning", "error")):
         raise RuntimeError(navigate_result)
@@ -1061,9 +1057,7 @@ def write_complete_chapter_v2(
     navigate_result = navigate_to_chat(
         project["chat_url"],
         project.get("browser", "chrome"),
-        extra_wait_sec=int(project.get("chat_load_wait_sec", 0)),
         progress=progress,
-        interrupt_fn=_figure_interrupt_fn,
     )
     if navigate_result.lower().startswith(("warning", "error")):
         raise RuntimeError(navigate_result)
@@ -1170,9 +1164,7 @@ def write_sections(
     navigate_result = navigate_to_chat(
         project["chat_url"],
         project.get("browser", "chrome"),
-        extra_wait_sec=int(project.get("chat_load_wait_sec", 0)),
         progress=progress,
-        interrupt_fn=_figure_interrupt_fn,
     )
     if navigate_result.lower().startswith(("warning", "error")):
         raise RuntimeError(navigate_result)
@@ -1253,9 +1245,7 @@ def finish_chapter(
     navigate_result = navigate_to_chat(
         project["chat_url"],
         project.get("browser", "chrome"),
-        extra_wait_sec=int(project.get("chat_load_wait_sec", 0)),
         progress=progress,
-        interrupt_fn=_figure_interrupt_fn,
     )
     if navigate_result.lower().startswith(("warning", "error")):
         raise RuntimeError(navigate_result)

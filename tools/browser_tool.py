@@ -533,9 +533,7 @@ def _normalise_url(url: str) -> str:
 def navigate_to_chat(
     chat_url: str,
     browser_name: str = "chrome",
-    extra_wait_sec: int = 0,
     progress=None,
-    interrupt_fn=None,
 ) -> str:
     """Navigate to a specific ChatGPT chat URL.
 
@@ -543,13 +541,10 @@ def navigate_to_chat(
     skipped, but _wait_for_page_ready() is ALWAYS called so that the agent
     never fires prompts into a half-loaded conversation (blank message area).
 
-    extra_wait_sec — additional fixed wait AFTER the page-ready check, to
-        allow very slow / heavy chats to fully render before the first prompt
-        is sent.  Set via config.json project → "chat_load_wait_sec".
-        A progress countdown is reported to Discord every 15 s.
-    interrupt_fn  — optional zero-arg callable (same pattern as figure
-        interrupts).  If the user types "send" in Discord during the wait,
-        the remaining countdown is skipped immediately.
+    For existing chats (/c/ URLs) whose message history has not yet rendered
+    (count == 0 after page-ready), this function polls until messages appear
+    — up to 10 minutes — and reports progress every 30 s.  This makes the
+    agent fully automatic regardless of how long the chat takes to load.
     """
     page = _ensure_browser(browser_name)
 
@@ -571,29 +566,34 @@ def navigate_to_chat(
     # Always wait for the conversation to finish rendering before returning.
     _wait_for_page_ready(page)
 
-    # Extra wait only when we actually navigated (first load of a slow chat).
-    # When already_there=True the page was already rendered — no extra wait needed.
-    if extra_wait_sec > 0 and not already_there:
+    # ── Adaptive wait for slow/heavy chats ───────────────────────────────────
+    # If this is an existing conversation (/c/ in URL) but no messages are
+    # visible yet, the chat is still loading.  Poll until messages appear
+    # rather than using a fixed sleep — this proceeds the moment the chat is
+    # ready, whether that takes 5 s or 5 min.
+    is_existing_chat = "/c/" in chat_url
+    if is_existing_chat and _count_assistant_messages(page) == 0:
+        POLL_INTERVAL  = 3      # seconds between checks
+        REPORT_INTERVAL = 30    # seconds between Discord updates
+        HARD_CAP       = 600    # give up after 10 min regardless
+        poll_start     = time.time()
+        last_reported  = 0.0
         if progress:
-            progress(
-                f"Waiting {extra_wait_sec}s for the chat to fully load before sending… "
-                f"Type **send** to skip the wait and proceed immediately."
-            )
-        remaining = extra_wait_sec
-        while remaining > 0:
-            # Check for early-skip command from Discord
-            if interrupt_fn and interrupt_fn().lower().strip() == "send":
+            progress("Chat history not yet visible — waiting for it to load…")
+
+        while time.time() - poll_start < HARD_CAP:
+            page.wait_for_timeout(POLL_INTERVAL * 1_000)
+            if _count_assistant_messages(page) > 0:
                 if progress:
-                    progress("Got 'send' — skipping remaining wait, proceeding now.")
+                    elapsed = int(time.time() - poll_start)
+                    progress(f"Chat loaded ({elapsed}s) — proceeding.")
                 break
-            sleep_chunk = min(15, remaining)
-            page.wait_for_timeout(sleep_chunk * 1_000)
-            remaining -= sleep_chunk
-            if progress and remaining > 0:
-                progress(
-                    f"Waiting for chat to load… {remaining}s remaining. "
-                    f"Type **send** to proceed immediately."
-                )
+            elapsed = int(time.time() - poll_start)
+            if progress and elapsed - last_reported >= REPORT_INTERVAL:
+                progress(f"Still waiting for chat to load… ({elapsed}s elapsed)")
+                last_reported = elapsed
+        # If we hit the cap with 0 messages the chat may be genuinely empty
+        # (new conversation) — proceed anyway so the agent is not blocked.
 
     # Verify the page is usable (look for textarea)
     el, _ = _find_textarea(page)
