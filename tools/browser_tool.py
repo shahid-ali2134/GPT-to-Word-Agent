@@ -533,34 +533,33 @@ def _normalise_url(url: str) -> str:
 def navigate_to_chat(chat_url: str, browser_name: str = "chrome") -> str:
     """Navigate to a specific ChatGPT chat URL.
 
-    If the browser is already on the correct page and the input area is
-    available, the reload is skipped entirely so a second /writecompletechapter
-    call does not disrupt an already-ready session.
+    If the browser is already on the correct page the page.goto() reload is
+    skipped, but _wait_for_page_ready() is ALWAYS called so that the agent
+    never fires prompts into a half-loaded conversation (blank message area).
     """
     page = _ensure_browser(browser_name)
 
-    # ── Already on the right page? Skip reload if textarea is ready ──────────
-    if _normalise_url(page.url or "") == _normalise_url(chat_url):
-        el, _ = _find_textarea(page)
-        if el:
-            return f"Navigated to chat: {chat_url}"
+    already_there = _normalise_url(page.url or "") == _normalise_url(chat_url)
 
-    # First visit — handle login if needed
-    if "chatgpt.com" not in (page.url or ""):
-        _wait_for_login(page)
+    if not already_there:
+        # First visit — handle login if needed
+        if "chatgpt.com" not in (page.url or ""):
+            _wait_for_login(page)
 
-    try:
-        page.goto(chat_url, wait_until="domcontentloaded", timeout=30_000)
-    except Exception:
         try:
-            page.wait_for_load_state("domcontentloaded", timeout=15_000)
+            page.goto(chat_url, wait_until="domcontentloaded", timeout=30_000)
         except Exception:
-            pass
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=15_000)
+            except Exception:
+                pass
 
-    # Wait for the SPA to finish rendering the conversation before returning
+    # Always wait for the conversation to finish rendering before returning.
+    # The stability poll (capped at 5 s) is fast when the page is already
+    # loaded and reliable when it is still fetching messages.
     _wait_for_page_ready(page)
 
-    # Verify the page loaded (look for textarea)
+    # Verify the page is usable (look for textarea)
     el, _ = _find_textarea(page)
     if not el:
         return f"Warning: navigated to {chat_url} but could not find the input area. Are you logged in?"
