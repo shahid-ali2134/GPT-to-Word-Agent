@@ -506,9 +506,25 @@ def _wait_for_page_ready(page: Page, timeout_sec: int = 30) -> None:
     page.wait_for_timeout(1_000)
 
 
+def _normalise_url(url: str) -> str:
+    """Strip trailing slash, fragment, and query-string for URL comparison."""
+    return url.split("?")[0].split("#")[0].rstrip("/")
+
+
 def navigate_to_chat(chat_url: str, browser_name: str = "chrome") -> str:
-    """Navigate to a specific ChatGPT chat URL."""
+    """Navigate to a specific ChatGPT chat URL.
+
+    If the browser is already on the correct page and the input area is
+    available, the reload is skipped entirely so a second /writecompletechapter
+    call does not disrupt an already-ready session.
+    """
     page = _ensure_browser(browser_name)
+
+    # ── Already on the right page? Skip reload if textarea is ready ──────────
+    if _normalise_url(page.url or "") == _normalise_url(chat_url):
+        el, _ = _find_textarea(page)
+        if el:
+            return f"Navigated to chat: {chat_url}"
 
     # First visit — handle login if needed
     if "chatgpt.com" not in (page.url or ""):
