@@ -206,6 +206,32 @@ COMPLETENESS
 Please reply with "Understood." to confirm.\
 """
 
+_INSTRUCT_CONCLUDE = """\
+I will sometimes send you this exact prompt:
+
+  "Continue to the next section! But as we are at the end of section so lets \
+conclude the section properly! Only write the main sections now!"
+
+When you receive that prompt, follow these rules strictly:
+
+• Write ONLY the remaining top-level section headings using ## X.Y format.
+  Example: ## 4.7  Evaluation Metrics    ## 5.8  Future Directions
+
+• For each top-level section, write 1–2 short concluding paragraphs (no more).
+  Summarise the key idea of that section briefly and conclusively.
+
+• Do NOT write any subsections (### X.Y.Z) or sub-subsections at all.
+  Skip every subsection entirely — only the top-level ## X.Y headings matter.
+
+• Do NOT expand or elaborate — the chapter has already reached its length limit.
+  The goal is to close out the remaining sections cleanly without adding new depth.
+
+• Do NOT add a chapter summary or conclusion paragraph after the last section.
+  Stop immediately after the last top-level section's 1–2 paragraphs.
+
+Please reply with "Understood." to confirm.\
+"""
+
 FORMATTING_INSTRUCTIONS: dict[str, str] = {
     "headings":  _INSTRUCT_HEADINGS,
     "prose":     _INSTRUCT_PROSE,
@@ -213,6 +239,7 @@ FORMATTING_INSTRUCTIONS: dict[str, str] = {
     "length":    _INSTRUCT_LENGTH,
     "figures":   _INSTRUCT_FIGURES,
     "tables":    _INSTRUCT_TABLES,
+    "conclude":  _INSTRUCT_CONCLUDE,
     "all":       _INSTRUCT_ALL,
 }
 
