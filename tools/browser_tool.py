@@ -486,28 +486,43 @@ def _wait_for_page_ready(page: Page, timeout_sec: int = 30) -> None:
     ChatGPT is a React SPA: after goto() the DOM shell loads quickly
     (domcontentloaded fires) but the conversation history is fetched via API
     and rendered asynchronously.  Typing into the textarea before React has
-    hydrated it causes the text to be silently discarded.
+    hydrated it causes the text to be silently discarded and the baseline
+    message count to be read incorrectly, causing prompts to fire into a
+    half-loaded page.
 
     Strategy:
-      1. Wait for network to go idle — this means all message data has been
-         fetched from the API.  Once networkidle fires, the remaining work is
-         local React rendering which completes in under a second.
-      2. A short fixed pause (1.5 s) for React to paint the final DOM nodes.
-
-    We deliberately do NOT poll the assistant-message count for stability.
-    In a long chat (200+ messages) ChatGPT renders messages progressively and
-    the count changes continuously for 30+ seconds, which used to cause this
-    function to block for the full timeout_sec window on every call.
+      1. Wait for network to go idle (API message-fetch calls complete).
+         Capped at 40 s for slow/heavy chats.
+      2. Short stability poll: wait until the assistant-message count stops
+         changing for 1 s, capped at 5 s total.  This is enough for React to
+         finish painting without blocking for the full 30 s that the old
+         unbounded poll used to take on 200-message chats.
+      3. A small fixed settle (1 s) for any post-render animations.
     """
-    # Step 1 — network idle: all API responses (message history) received.
-    # Cap at 40 s for very slow / heavy chats.
+    # Step 1 — network idle
     try:
         page.wait_for_load_state("networkidle", timeout=min(timeout_sec * 1_000, 40_000))
     except Exception:
-        pass  # timed out — React may still be rendering, fixed pause handles it
+        pass  # timed out — proceed to the stability check
 
-    # Step 2 — brief fixed settle so React finishes painting
-    page.wait_for_timeout(1_500)
+    # Step 2 — short stability poll (max 5 s)
+    STABILITY_WINDOW = 1.0   # count must be unchanged for this many seconds
+    STABILITY_CAP    = 5.0   # never wait more than this regardless
+    prev_count  = -1
+    stable_since = time.time()
+    cap_deadline = time.time() + STABILITY_CAP
+
+    while time.time() < cap_deadline:
+        curr_count = _count_assistant_messages(page)
+        if curr_count != prev_count:
+            prev_count = curr_count
+            stable_since = time.time()
+        elif time.time() - stable_since >= STABILITY_WINDOW:
+            break  # stable for 1 s → conversation rendered
+        page.wait_for_timeout(300)
+
+    # Step 3 — brief final settle
+    page.wait_for_timeout(1_000)
 
 
 def _normalise_url(url: str) -> str:
