@@ -530,12 +530,26 @@ def _normalise_url(url: str) -> str:
     return url.split("?")[0].split("#")[0].rstrip("/")
 
 
-def navigate_to_chat(chat_url: str, browser_name: str = "chrome") -> str:
+def navigate_to_chat(
+    chat_url: str,
+    browser_name: str = "chrome",
+    extra_wait_sec: int = 0,
+    progress=None,
+    interrupt_fn=None,
+) -> str:
     """Navigate to a specific ChatGPT chat URL.
 
     If the browser is already on the correct page the page.goto() reload is
     skipped, but _wait_for_page_ready() is ALWAYS called so that the agent
     never fires prompts into a half-loaded conversation (blank message area).
+
+    extra_wait_sec — additional fixed wait AFTER the page-ready check, to
+        allow very slow / heavy chats to fully render before the first prompt
+        is sent.  Set via config.json project → "chat_load_wait_sec".
+        A progress countdown is reported to Discord every 15 s.
+    interrupt_fn  — optional zero-arg callable (same pattern as figure
+        interrupts).  If the user types "send" in Discord during the wait,
+        the remaining countdown is skipped immediately.
     """
     page = _ensure_browser(browser_name)
 
@@ -555,9 +569,31 @@ def navigate_to_chat(chat_url: str, browser_name: str = "chrome") -> str:
                 pass
 
     # Always wait for the conversation to finish rendering before returning.
-    # The stability poll (capped at 5 s) is fast when the page is already
-    # loaded and reliable when it is still fetching messages.
     _wait_for_page_ready(page)
+
+    # Extra wait only when we actually navigated (first load of a slow chat).
+    # When already_there=True the page was already rendered — no extra wait needed.
+    if extra_wait_sec > 0 and not already_there:
+        if progress:
+            progress(
+                f"Waiting {extra_wait_sec}s for the chat to fully load before sending… "
+                f"Type **send** to skip the wait and proceed immediately."
+            )
+        remaining = extra_wait_sec
+        while remaining > 0:
+            # Check for early-skip command from Discord
+            if interrupt_fn and interrupt_fn().lower().strip() == "send":
+                if progress:
+                    progress("Got 'send' — skipping remaining wait, proceeding now.")
+                break
+            sleep_chunk = min(15, remaining)
+            page.wait_for_timeout(sleep_chunk * 1_000)
+            remaining -= sleep_chunk
+            if progress and remaining > 0:
+                progress(
+                    f"Waiting for chat to load… {remaining}s remaining. "
+                    f"Type **send** to proceed immediately."
+                )
 
     # Verify the page is usable (look for textarea)
     el, _ = _find_textarea(page)

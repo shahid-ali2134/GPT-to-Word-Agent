@@ -260,7 +260,13 @@ def send_formatting_instruction(
 
     if progress:
         progress(f"Opening ChatGPT chat for project '{project_name}'.")
-    navigate_result = navigate_to_chat(project["chat_url"], project.get("browser", "chrome"))
+    navigate_result = navigate_to_chat(
+        project["chat_url"],
+        project.get("browser", "chrome"),
+        extra_wait_sec=int(project.get("chat_load_wait_sec", 0)),
+        progress=progress,
+        interrupt_fn=_figure_interrupt_fn,
+    )
     if navigate_result.lower().startswith(("warning", "error")):
         raise RuntimeError(navigate_result)
 
@@ -951,7 +957,13 @@ def write_complete_chapter(
     clear_figure_src_cache()
 
     report(f"Opening ChatGPT chat for project '{project_name}'.")
-    navigate_result = navigate_to_chat(project["chat_url"], project.get("browser", "chrome"))
+    navigate_result = navigate_to_chat(
+        project["chat_url"],
+        project.get("browser", "chrome"),
+        extra_wait_sec=int(project.get("chat_load_wait_sec", 0)),
+        progress=progress,
+        interrupt_fn=_figure_interrupt_fn,
+    )
     if navigate_result.lower().startswith(("warning", "error")):
         raise RuntimeError(navigate_result)
 
@@ -1046,7 +1058,13 @@ def write_complete_chapter_v2(
     clear_figure_src_cache()
 
     report(f"Opening ChatGPT chat for project '{project_name}'.")
-    navigate_result = navigate_to_chat(project["chat_url"], project.get("browser", "chrome"))
+    navigate_result = navigate_to_chat(
+        project["chat_url"],
+        project.get("browser", "chrome"),
+        extra_wait_sec=int(project.get("chat_load_wait_sec", 0)),
+        progress=progress,
+        interrupt_fn=_figure_interrupt_fn,
+    )
     if navigate_result.lower().startswith(("warning", "error")):
         raise RuntimeError(navigate_result)
 
@@ -1149,7 +1167,13 @@ def write_sections(
     clear_figure_src_cache()
 
     report(f"Opening ChatGPT chat for project '{project_name}'.")
-    navigate_result = navigate_to_chat(project["chat_url"], project.get("browser", "chrome"))
+    navigate_result = navigate_to_chat(
+        project["chat_url"],
+        project.get("browser", "chrome"),
+        extra_wait_sec=int(project.get("chat_load_wait_sec", 0)),
+        progress=progress,
+        interrupt_fn=_figure_interrupt_fn,
+    )
     if navigate_result.lower().startswith(("warning", "error")):
         raise RuntimeError(navigate_result)
 
@@ -1226,7 +1250,13 @@ def finish_chapter(
     clear_figure_src_cache()
 
     report(f"Opening ChatGPT chat for project '{project_name}'.")
-    navigate_result = navigate_to_chat(project["chat_url"], project.get("browser", "chrome"))
+    navigate_result = navigate_to_chat(
+        project["chat_url"],
+        project.get("browser", "chrome"),
+        extra_wait_sec=int(project.get("chat_load_wait_sec", 0)),
+        progress=progress,
+        interrupt_fn=_figure_interrupt_fn,
+    )
     if navigate_result.lower().startswith(("warning", "error")):
         raise RuntimeError(navigate_result)
 
