@@ -622,6 +622,10 @@ def _get_word_app():
     return _word_app
 
 
+_RPC_E_CALL_REJECTED  = -2147418111   # Word is busy — retryable
+_RPC_E_DISCONNECTED   = -2147417848   # Word COM object died — reconnect
+
+
 def _update_word_fields(word_file_path: str) -> None:
     """Recalculate all SEQ / caption fields and convert PENDING_EQ equation
     markers to real Word equation objects via COM automation.
@@ -630,47 +634,73 @@ def _update_word_fields(word_file_path: str) -> None:
     PENDING_EQ: markers for equations that need Word's OMaths.Add().
     Reuses a persistent Word instance so the launch/quit overhead is paid only
     once per session rather than once per section.
+
+    Retry logic:
+      RPC_E_CALL_REJECTED  — Word is busy (dialog/save in progress); wait 3 s
+                             and retry up to MAX_RETRIES times.
+      RPC_E_DISCONNECTED   — Word's COM object died; reset the cached handle,
+                             get a fresh Word instance, and retry once.
     """
     global _word_app
-    word = _get_word_app()
-    if word is None:
-        return
-
+    MAX_RETRIES = 4
     abs_path = os.path.abspath(word_file_path)
-    opened_here = False
 
-    try:
-        # Reuse the document if it is already open in Word
-        doc = None
+    for attempt in range(MAX_RETRIES):
+        word = _get_word_app()
+        if word is None:
+            return
+
+        opened_here = False
         try:
-            for d in word.Documents:
-                if os.path.normcase(d.FullName) == os.path.normcase(abs_path):
-                    doc = d
-                    break
-        except Exception:
-            pass
+            # Reuse the document if it is already open in Word
+            doc = None
+            try:
+                for d in word.Documents:
+                    if os.path.normcase(d.FullName) == os.path.normcase(abs_path):
+                        doc = d
+                        break
+            except Exception:
+                pass
 
-        if doc is None:
-            doc = word.Documents.Open(abs_path)
-            opened_here = True
+            if doc is None:
+                doc = word.Documents.Open(abs_path)
+                opened_here = True
 
-        doc.Fields.Update()
+            doc.Fields.Update()
 
-        converted = _convert_pending_equations(doc)
-        if converted:
-            print(f"  [Word] converted {converted} pending equation(s) to OMath objects")
+            converted = _convert_pending_equations(doc)
+            if converted:
+                print(f"  [Word] converted {converted} pending equation(s) to OMath objects")
 
-        doc.Save()
+            doc.Save()
 
-        # Keep the document open so the next call can reuse it without reopening.
-        # Only close it if we opened it AND it wasn't already open (to avoid
-        # leaving stale handles on documents the user didn't have open).
-        if opened_here:
-            doc.Close(SaveChanges=False)
+            if opened_here:
+                doc.Close(SaveChanges=False)
 
-    except Exception as exc:
-        print(f"  [Word] COM update skipped: {exc}")
-        _word_app = None  # reset so next call gets a fresh instance
+            return  # success
+
+        except Exception as exc:
+            hresult = exc.args[0] if exc.args else None
+
+            if hresult == _RPC_E_CALL_REJECTED and attempt < MAX_RETRIES - 1:
+                wait = 3 * (attempt + 1)   # 3 s, 6 s, 9 s …
+                print(f"  [Word] Word is busy (attempt {attempt + 1}) — retrying in {wait}s…")
+                import time as _time
+                _time.sleep(wait)
+                continue  # retry
+
+            if hresult == _RPC_E_DISCONNECTED:
+                print("  [Word] Word COM disconnected — resetting and reconnecting…")
+                _word_app = None  # force reconnect on next _get_word_app()
+                if attempt < MAX_RETRIES - 1:
+                    import time as _time
+                    _time.sleep(2)
+                    continue  # retry with fresh instance
+
+            # Unrecoverable or max retries exhausted
+            print(f"  [Word] COM update failed after {attempt + 1} attempt(s): {exc}")
+            _word_app = None
+            return
 
 
 def append_blocks_to_word(blocks: list[Block], word_file_path: str) -> str:
