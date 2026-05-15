@@ -591,13 +591,19 @@ def _convert_pending_equations(word_doc) -> int:
     return converted
 
 
-# Persistent Word COM instance — kept alive between calls so we don't pay the
-# launch/quit overhead on every section write.
+# Hidden Word instance owned exclusively by the agent.
+# DispatchEx always creates a NEW Word process so it never touches the user's
+# visible Word session (where they may have another document open).
 _word_app = None
 
 
 def _get_word_app():
-    """Return a live Word.Application COM object, reusing the cached one if possible."""
+    """Return the agent's dedicated hidden Word.Application COM object.
+
+    Uses DispatchEx to create a separate Word process that is invisible to the
+    user.  This prevents the agent from interfering with any Word document the
+    user has open in their own Word session.
+    """
     global _word_app
     if _word_app is not None:
         try:
@@ -612,13 +618,13 @@ def _get_word_app():
         return None
 
     try:
-        _word_app = win32com.client.GetActiveObject("Word.Application")
+        # DispatchEx spawns a brand-new Word process (not GetActiveObject which
+        # would grab the user's visible instance).
+        _word_app = win32com.client.DispatchEx("Word.Application")
+        _word_app.Visible = False
+        _word_app.DisplayAlerts = 0   # wdAlertsNone — suppress all dialogs
     except Exception:
-        try:
-            _word_app = win32com.client.Dispatch("Word.Application")
-            _word_app.Visible = False
-        except Exception:
-            return None
+        return None
     return _word_app
 
 
