@@ -141,7 +141,16 @@ Rules:
 • Figure numbers are SEQUENTIAL across the whole book (e.g. 10, 11, 12 …), NOT chapter-based (not 3.1, 3.2).
 • The agent will automatically ask ChatGPT to draw the figure after detecting the placement line.
 • Do NOT write "Draw Figure N" — that command is sent automatically by the agent.
-• Do NOT use placeholder text like [Figure N] or (see figure below).\
+• Do NOT use placeholder text like [Figure N] or (see figure below).
+
+Visual design rules (ChatGPT will draw each figure):
+• Every figure must be UNIQUE in style and layout — do NOT repeat the same visual format twice.
+• Vary the visual style across figures: use solid-color diagrams for some, gradient fills for others, \
+flow charts, architecture diagrams, layered block diagrams, network graphs, timeline visuals, \
+heatmaps, or any other distinct visual form that fits the content.
+• Make every figure visually attractive and professional — use clean layouts, meaningful color choices, \
+clear labels, and good use of whitespace.
+• The caption must clearly describe what the figure shows so ChatGPT can draw it accurately.\
 """
 
 _INSTRUCT_TABLES = """\
@@ -240,6 +249,11 @@ FIGURES
 • Figure numbers are SEQUENTIAL across the whole book (e.g., 10, 11, 12 …).
 • Do NOT write "Draw Figure N" — the agent handles that automatically.
 • Do NOT use placeholder text like [Figure N].
+• Every figure must be UNIQUE in style — do NOT repeat the same visual format twice in a chapter.
+• Vary styles across figures: solid-color diagrams, gradients, flow charts, architecture diagrams, \
+network graphs, timelines, heatmaps, layered blocks, etc.
+• Make every figure visually attractive: clean layout, meaningful colors, clear labels, good whitespace.
+• Write a detailed enough caption so the figure can be drawn accurately from it alone.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 TABLES
