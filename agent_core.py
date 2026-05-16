@@ -88,7 +88,11 @@ From now on, write all body content as continuous prose paragraphs:
 • Each subsection should contain at least 3–4 full paragraphs.
 • Every paragraph should be 4–6 sentences minimum.
 • Reserve bullet lists only for explicitly enumerable items (e.g. a comparison table or step-by-step procedure) — and even then, prefer prose.
-• Do NOT begin a response with a preamble like "Here is section 3.1:" — start directly with the heading.\
+• Do NOT begin a response with a preamble like "Here is section 3.1:" — start directly with the heading.
+• In normal prose text (outside of $...$ or $$...$$), do NOT use special symbols or \
+Unicode characters (×, →, ≥, ∈, α, β, ∑, etc.). Write them out in plain English words \
+instead (e.g. "multiplied by", "leads to", "greater than or equal to", "belongs to", \
+"alpha", "beta", "sum"). Special symbols are only permitted inside LaTeX delimiters.\
 """
 
 _INSTRUCT_EQUATIONS = """\
@@ -133,6 +137,7 @@ Step 2 — caption line (immediately after the placement line):
   Example: Fig. 12. Core components of the agentic ML pipeline.
 
 Rules:
+• Every chapter must contain AT LEAST 4–5 figures spread across its sections.
 • Figure numbers are SEQUENTIAL across the whole book (e.g. 10, 11, 12 …), NOT chapter-based (not 3.1, 3.2).
 • The agent will automatically ask ChatGPT to draw the figure after detecting the placement line.
 • Do NOT write "Draw Figure N" — that command is sent automatically by the agent.
@@ -212,6 +217,9 @@ PROSE STYLE
 • Write body content as continuous prose paragraphs — no bullet points or lists in the main text.
 • Each subsection must have at least 3–4 full paragraphs (minimum 4–6 sentences each).
 • Do NOT start a response with "Here is section X.Y:" — begin directly with the heading.
+• In normal prose (outside LaTeX delimiters), do NOT use special symbols or Unicode characters \
+(×, →, ≥, ∈, α, β, ∑, etc.). Write them out in plain English words instead \
+(e.g. "multiplied by", "leads to", "greater than or equal to", "alpha", "sum").
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 MATHEMATICAL EQUATIONS
@@ -224,6 +232,7 @@ MATHEMATICAL EQUATIONS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FIGURES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Every chapter must contain AT LEAST 4–5 figures spread across its sections.
 • Where a figure belongs, write a placement line on its own:
     Placement: Insert Figure N here.
 • Immediately after, write the caption:
