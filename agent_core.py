@@ -150,6 +150,38 @@ Rules:
 • Do NOT use plain-text tab-separated tables — use the pipe (|) format.\
 """
 
+_INSTRUCT_NOREPEAT = """\
+From now on, do NOT repeat any content that has already appeared earlier in this conversation:
+
+• Do NOT restate, paraphrase, or re-explain any concept, definition, or argument \
+that was already covered in a previous section or response.
+• Do NOT repeat any equation that was already written — if you need to refer to it, \
+cite it by its number (e.g., "as shown in Equation (3)").
+• Do NOT re-insert any figure or table that was already placed — reference it by \
+number only (e.g., "as illustrated in Figure 7" or "see Table 2").
+• Each section must introduce genuinely new content that extends and builds on \
+what came before, not a restatement of it.
+• If a concept was introduced briefly in an earlier section, you may expand on it \
+here — but do NOT copy or rewrite the original passage.
+
+Please reply with "Understood." to confirm.\
+"""
+
+_INSTRUCT_SUMMARY = """\
+From now on, the LAST section of every chapter must be a Chapter Summary:
+
+• Write the final section as a dedicated summary section with the heading:
+    ## X.Y  Chapter Summary
+  where X is the chapter number and Y is the next section number in sequence.
+• The summary must briefly recap the core ideas covered in the chapter — \
+one short paragraph per major topic area is sufficient.
+• Do NOT introduce any new concepts, equations, figures, or tables in the summary.
+• Do NOT use subsections (### headings) inside the Chapter Summary.
+• Keep the summary concise: 4–8 paragraphs maximum.
+
+Please reply with "Understood." to confirm.\
+"""
+
 _INSTRUCT_ALL = """\
 Before I give you the next section to write, please confirm you will follow ALL of these formatting rules for every response in this session:
 
@@ -197,6 +229,22 @@ TABLES
 • Table numbers are sequential within the chapter (Table 1, Table 2, …).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NO REPETITION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Do NOT repeat any content, equation, figure, or table that has already appeared earlier in this conversation.
+• Each section must introduce genuinely new material — not restate or paraphrase prior sections.
+• To refer back to something already written, cite it by number (e.g., "as in Equation (3)" or "see Figure 7").
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CHAPTER SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• The LAST section of every chapter must be a Chapter Summary (## X.Y  Chapter Summary).
+• Recap the core ideas covered — one short paragraph per major topic area.
+• No new concepts, equations, figures, or tables in the summary.
+• No subsections inside the Chapter Summary.
+• Keep it to 4–8 paragraphs maximum.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 COMPLETENESS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 • Write each section completely — do not cut off mid-sentence.
@@ -239,6 +287,8 @@ FORMATTING_INSTRUCTIONS: dict[str, str] = {
     "length":    _INSTRUCT_LENGTH,
     "figures":   _INSTRUCT_FIGURES,
     "tables":    _INSTRUCT_TABLES,
+    "norepeat":  _INSTRUCT_NOREPEAT,
+    "summary":   _INSTRUCT_SUMMARY,
     "conclude":  _INSTRUCT_CONCLUDE,
     "all":       _INSTRUCT_ALL,
 }

@@ -140,6 +140,8 @@ Send a formatting reminder to ChatGPT — use this when GPT starts responding in
 | `figures` | Write `Placement: Insert Figure N here.` then `Fig. N. Caption.` for each figure |
 | `tables` | Caption as `Table N. Title` on its own line above the table, then markdown pipe format |
 | `length` | Write every concept in full academic detail — no summarizing or compressing |
+| `norepeat` | Never repeat any content, equation, figure, or table that already appeared earlier in the chat |
+| `summary` | The last section of every chapter must be a Chapter Summary (`## X.Y  Chapter Summary`) |
 | `conclude` | When asked to conclude: write only `## X.Y` top-level headings with 1–2 brief paragraphs each, no subsections |
 | `custom` | Send only the text you type in the `message` field |
 

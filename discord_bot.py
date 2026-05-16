@@ -477,6 +477,8 @@ _INSTRUCT_CHOICES = [
     app_commands.Choice(name="figures — placement lines + sequential figure numbers", value="figures"),
     app_commands.Choice(name="tables — Table N. caption + pipe format", value="tables"),
     app_commands.Choice(name="length — full academic detail, no compression", value="length"),
+    app_commands.Choice(name="norepeat — never repeat content, equations, figures, or tables", value="norepeat"),
+    app_commands.Choice(name="summary — last section of every chapter must be a Chapter Summary", value="summary"),
     app_commands.Choice(name="conclude — when concluding: only ## X.Y headings, no subsections", value="conclude"),
     app_commands.Choice(name="custom — use the message field only", value="custom"),
 ]
