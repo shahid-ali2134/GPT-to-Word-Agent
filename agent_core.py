@@ -70,7 +70,15 @@ Rules:
 - Always include the number prefix before the title.
 - Do NOT write unnumbered headings.
 - Do NOT go deeper than X.Y.Z (three levels is the maximum).
-- The number will be stripped and replaced by the Word document's own numbering, so include it anyway for clarity.\
+- The number will be stripped and replaced by the Word document's own numbering, so include it anyway for clarity.
+
+CHAPTER TITLE — FIRST RESPONSE ONLY:
+- In the very first response (the introductory opening paragraphs before any section), \
+always begin with the chapter title on its own line using a single hash:
+    # Chapter X: Full Chapter Title
+- Write the introductory paragraphs immediately after the title, then end your response \
+with: "Continue to the next section!"
+- Do NOT include the chapter title again in any subsequent section response.\
 """
 
 _INSTRUCT_PROSE = """\
@@ -193,6 +201,10 @@ HEADINGS
 • Always include the decimal number prefix.
 • Maximum depth is X.Y.Z — no deeper.
 • Do NOT write unnumbered headings.
+• FIRST RESPONSE ONLY: begin with the chapter title on its own line:
+    # Chapter X: Full Chapter Title
+  Write the introductory paragraphs immediately after, then end with: "Continue to the next section!"
+  Do NOT include the chapter title again in any subsequent section.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PROSE STYLE
