@@ -208,14 +208,26 @@ def _paste_text(locator: Locator, page: Page, text: str):
     page.keyboard.press("Control+A")
     page.keyboard.press("Delete")
     try:
+        try:
+            _saved_clip = pyperclip.paste()
+        except Exception:
+            _saved_clip = None
+
         pyperclip.copy(text)
         page.keyboard.press("Control+V")
+        page.wait_for_timeout(500)
+
+        if _saved_clip is not None:
+            try:
+                pyperclip.copy(_saved_clip)
+            except Exception:
+                pass
     except Exception:
         try:
             locator.fill(text)
         except Exception:
             page.keyboard.type(text, delay=1)
-    page.wait_for_timeout(500)
+        page.wait_for_timeout(500)
 
 
 def _read_clipboard(page: Page) -> str:
@@ -278,9 +290,21 @@ def _wait_for_result_and_copy(page: Page, original_text: str, timeout_sec: int, 
     deadline = time.time() + timeout_sec
 
     while time.time() < deadline:
+        # Primary: read result directly from the page DOM — no clipboard involved.
+        result = _extract_result_from_page(page, original_text)
+        if result:
+            return result
+
+        # Fallback: click the Copy button and read via clipboard only when DOM
+        # extraction found nothing.  Save and restore the user's clipboard so
+        # their copied content survives the operation.
         copy_button = _find_button(page, r"copy|copied", timeout_ms=1_000)
         if copy_button:
-            before_clipboard = _read_clipboard(page)
+            try:
+                _saved_clip = pyperclip.paste()
+            except Exception:
+                _saved_clip = None
+
             try:
                 copy_button.click()
                 page.wait_for_timeout(800)
@@ -288,14 +312,16 @@ def _wait_for_result_and_copy(page: Page, original_text: str, timeout_sec: int, 
                 pass
 
             copied = _read_clipboard(page)
-            if copied and copied != before_clipboard and copied != original_text.strip():
-                return copied
+
+            if _saved_clip is not None:
+                try:
+                    pyperclip.copy(_saved_clip)
+                except Exception:
+                    pass
+
             if copied and copied != original_text.strip() and len(copied) > 20:
                 return copied
 
-        result = _extract_result_from_page(page, original_text)
-        if result:
-            return result
         page.wait_for_timeout(1_000)
 
     raise TimeoutError("Timed out waiting for StealthWriter humanized result.")
@@ -377,7 +403,7 @@ def _humanize_text_sync(
     if not input_box:
         raise RuntimeError("Could not find StealthWriter input text area.")
 
-    _report(progress, "Pasting text into StealthWriter.")
+    _report(progress, "Clipboard in use — hold Ctrl+C for ~2 seconds.")
     _paste_text(input_box, page, text)
 
     humanize_button = _find_button(page, r"humanize", timeout_ms=10_000)

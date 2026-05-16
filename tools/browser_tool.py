@@ -681,6 +681,8 @@ def send_message(message: str, allow_retry: bool = True, progress=None) -> str:
         )
 
     # ── Attempt 1 ────────────────────────────────────────────────────────────
+    if progress:
+        progress("Clipboard in use — hold Ctrl+C for ~2 seconds.")
     _type_and_submit(_page, message)
     _page.wait_for_timeout(1_500)
     _wait_for_generation_complete(_page, prev_msg_count=msg_count_before, progress=progress)
