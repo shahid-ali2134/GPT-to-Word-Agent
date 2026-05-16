@@ -231,7 +231,8 @@ def _find_textarea(page: Page):
 def _type_text(page: Page, selector: str, text: str):
     """
     Fast text entry via clipboard paste (handles long/special-char text).
-    Falls back to keyboard.type for environments where clipboard isn't available.
+    Saves and restores the user's clipboard so parallel copy-paste work is
+    not disrupted.  Falls back to keyboard.type if clipboard is unavailable.
     """
     page.click(selector)
     page.wait_for_timeout(400)
@@ -242,9 +243,22 @@ def _type_text(page: Page, selector: str, text: str):
     page.wait_for_timeout(150)
 
     try:
+        # Preserve whatever the user currently has on the clipboard.
+        try:
+            _saved_clip = pyperclip.paste()
+        except Exception:
+            _saved_clip = None
+
         pyperclip.copy(text)
         page.keyboard.press("Control+v")
         page.wait_for_timeout(500)
+
+        # Restore the user's clipboard immediately after pasting.
+        if _saved_clip is not None:
+            try:
+                pyperclip.copy(_saved_clip)
+            except Exception:
+                pass
     except Exception:
         # Fallback: type slowly (works but is slow for long text)
         page.keyboard.type(text, delay=5)
