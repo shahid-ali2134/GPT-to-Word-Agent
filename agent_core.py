@@ -89,6 +89,11 @@ From now on, write all body content as continuous prose paragraphs:
 • Every paragraph should be 4–6 sentences minimum.
 • Reserve bullet lists only for explicitly enumerable items (e.g. a comparison table or step-by-step procedure) — and even then, prefer prose.
 • Do NOT begin a response with a preamble like "Here is section 3.1:" — start directly with the heading.
+• Do NOT add any closing commentary after finishing a section — no "Section 3.4 is now complete.", \
+"Let me know if you'd like changes.", "Shall I continue?", or any similar follow-on sentence. \
+Stop immediately after the last paragraph of content.
+• ALWAYS write your response directly in the chat. Do NOT use Canvas, document view, \
+or any side panel. Everything must appear as a normal chat message.
 • In normal prose text (outside of $...$ or $$...$$), do NOT use special symbols or \
 Unicode characters (×, →, ≥, ∈, α, β, ∑, etc.). Write them out in plain English words \
 instead (e.g. "multiplied by", "leads to", "greater than or equal to", "belongs to", \
@@ -219,6 +224,14 @@ HEADINGS
     # Chapter X: Full Chapter Title
   Write the introductory paragraphs immediately after, then end with: "Continue to the next section!"
   Do NOT include the chapter title again in any subsequent section.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RESPONSE FORMAT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• ALWAYS write your response directly in the chat — do NOT use Canvas, document view, or any side panel.
+• Do NOT add closing commentary after finishing a section — no "Section X.Y is now complete.", \
+"Let me know if you'd like changes.", "Shall I continue?", or any similar follow-on sentence. \
+Stop immediately after the last paragraph of the section.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PROSE STYLE
