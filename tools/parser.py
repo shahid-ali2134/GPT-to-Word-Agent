@@ -327,7 +327,13 @@ def _is_figure_block(lines: List[str]) -> bool:
         return True
 
     # Imperative: "Insert/Place/Add/Put Fig. X …"
-    if re.search(r"\b(insert|place|put|add)\b", first, re.I) and _FIGURE_REF_RE.search(first):
+    # The figure reference must be within ~4 words of the imperative verb so that
+    # drawing-instruction text like "Place Reasoning Agents … shown in Fig. 40"
+    # does not accidentally trigger a draw request.
+    if re.search(
+        r"\b(insert|place|put|add)\b\s+(?:\w+\s+){0,4}(?:fig\.?|figure)\s+\d+",
+        first, re.I
+    ):
         return True
 
     # Caption / label line – starts with "Fig. X." or "Figure X:" etc.
@@ -352,7 +358,10 @@ def _parse_figure_block(lines: List[str]) -> List[Block]:
     # ── Placement instruction ─────────────────────────────────────────────────
     is_placement = (
         _PLACEMENT_LINE_RE.match(first) or
-        (re.search(r"\b(insert|place|put|add)\b", first, re.I) and fig_num)
+        bool(re.search(
+            r"\b(insert|place|put|add)\b\s+(?:\w+\s+){0,4}(?:fig\.?|figure)\s+\d+",
+            first, re.I
+        ))
     )
     if is_placement:
         if fig_num == 0:
