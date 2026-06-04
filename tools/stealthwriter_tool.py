@@ -67,23 +67,16 @@ def _find_humanizer_input(page: Page, timeout_ms: int = 5_000) -> Locator | None
         '[contenteditable="true"]',
         '[role="textbox"]',
     ]
+    # The init-script scroll lock keeps the page pinned at the top, so
+    # bounding_box Y values already reflect absolute page position — no
+    # manual scroll-to-top needed here.
+    try:
+        viewport_h = page.evaluate("() => window.innerHeight") or 900
+    except Exception:
+        viewport_h = 900
+
     deadline = time.time() + (timeout_ms / 1000)
     while time.time() < deadline:
-        # Scroll to top before every scan so bounding_box Y values equal the
-        # element's absolute distance from the top of the page.  Without this,
-        # a previously-scrolled page makes far-below elements appear at small Y
-        # values and they pass the viewport filter incorrectly.
-        try:
-            page.evaluate("window.scrollTo(0, 0)")
-            page.wait_for_timeout(150)
-        except Exception:
-            pass
-
-        try:
-            viewport_h = page.evaluate("() => window.innerHeight") or 900
-        except Exception:
-            viewport_h = 900
-
         candidates = []
         for selector in selectors:
             locator = page.locator(selector)
@@ -99,9 +92,6 @@ def _find_humanizer_input(page: Page, timeout_ms: int = 5_000) -> Locator | None
                     box = candidate.bounding_box()
                     if not box:
                         continue
-                    # With scroll=0, bounding_box Y is the absolute top of the
-                    # element from the top of the page.  The humanizer input is
-                    # always in the first viewport; FAQ / footer are far below.
                     if box.get("y", 9999) > viewport_h:
                         continue
                     area = (box.get("width", 0) or 0) * (box.get("height", 0) or 0)
@@ -114,7 +104,7 @@ def _find_humanizer_input(page: Page, timeout_ms: int = 5_000) -> Locator | None
         if candidates:
             candidates.sort(key=lambda item: item[0], reverse=True)
             return candidates[0][1]
-        page.wait_for_timeout(300)
+        page.wait_for_timeout(100)
     return None
 
 
@@ -233,13 +223,26 @@ def _navigate_to_humanizer(page: Page, progress=None):
     base_url = cfg.get("base_url", "https://stealthwriter.ai/")
     humanizer_url = cfg.get("humanizer_url", "https://stealthwriter.ai/")
 
-    _report(progress, "Opening StealthWriter.")
-    page.goto(base_url, wait_until="domcontentloaded", timeout=45_000)
-    _wait_for_login_if_needed(page, progress)
+    current = page.url or ""
+    already_on_humanizer = "humanizer" in current
 
-    _report(progress, "Opening StealthWriter humanizer page.")
-    page.goto(humanizer_url, wait_until="domcontentloaded", timeout=45_000)
-    _wait_for_login_if_needed(page, progress)
+    if already_on_humanizer:
+        # Already on the right page — skip both navigations.
+        _report(progress, "StealthWriter humanizer already open.")
+    elif "stealthwriter.ai" in current:
+        # On StealthWriter but wrong page — go directly to humanizer.
+        _report(progress, "Opening StealthWriter humanizer page.")
+        page.goto(humanizer_url, wait_until="domcontentloaded", timeout=45_000)
+        _wait_for_login_if_needed(page, progress)
+    else:
+        # Fresh start — load base first to handle login, then humanizer.
+        _report(progress, "Opening StealthWriter.")
+        page.goto(base_url, wait_until="domcontentloaded", timeout=45_000)
+        _wait_for_login_if_needed(page, progress)
+        _report(progress, "Opening StealthWriter humanizer page.")
+        page.goto(humanizer_url, wait_until="domcontentloaded", timeout=45_000)
+        _wait_for_login_if_needed(page, progress)
+
     save_browser_state()
 
 
