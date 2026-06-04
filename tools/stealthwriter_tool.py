@@ -238,13 +238,16 @@ def _select_mode(page: Page, mode_name: str, progress=None):
 
 
 def _paste_text(locator: Locator, page: Page, text: str):
-    # Scroll to top before clicking so the browser doesn't jump to a wrong element.
+    # Focus the element WITHOUT scrolling — avoids the fight between our
+    # window.scrollTo(0,0) and StealthWriter's own scroll-to-result JS.
     try:
-        page.evaluate("window.scrollTo(0, 0)")
-        page.wait_for_timeout(200)
+        el = locator.element_handle(timeout=3_000)
+        if el:
+            page.evaluate("(el) => { el.focus({preventScroll: true}); el.click(); }", el)
+        else:
+            locator.click()
     except Exception:
-        pass
-    locator.click()
+        locator.click()
     page.keyboard.press("Control+A")
     page.keyboard.press("Delete")
     try:
@@ -285,44 +288,49 @@ def _read_clipboard(page: Page) -> str:
 
 
 def _extract_result_from_page(page: Page, original_text: str) -> str:
-    texts = []
-    selectors = [
-        "textarea",
-        '[contenteditable="true"]',
-        '[role="textbox"]',
-        '[data-testid*="output" i]',
-        '[data-testid*="result" i]',
-        '[class*="output" i]',
-        '[class*="result" i]',
-    ]
-    for selector in selectors:
-        locator = page.locator(selector)
-        try:
-            count = locator.count()
-        except Exception:
-            count = 0
-        for index in range(count):
-            item = locator.nth(index)
-            try:
-                if not item.is_visible():
-                    continue
-                value = item.input_value(timeout=500) if selector == "textarea" else item.inner_text(timeout=500)
-                value = (value or "").strip()
-                if (
-                    value
-                    and value != original_text.strip()
-                    and len(value) > 20
-                    and "Sign In" not in value
-                    and "Pricing" not in value
-                ):
-                    texts.append(value)
-            except Exception:
-                continue
-
-    if not texts:
+    # Read candidate text values entirely in JavaScript so no Playwright
+    # locator method (input_value, inner_text, is_visible) can trigger a
+    # focus event or scroll the page.
+    try:
+        candidates: list[str] = page.evaluate(
+            """(originalText) => {
+                const selectors = [
+                    'textarea',
+                    '[contenteditable="true"]',
+                    '[role="textbox"]',
+                    '[data-testid*="output" i]',
+                    '[data-testid*="result" i]',
+                    '[class*="output" i]',
+                    '[class*="result" i]',
+                ];
+                const seen = new Set();
+                const results = [];
+                for (const sel of selectors) {
+                    for (const el of document.querySelectorAll(sel)) {
+                        const style = window.getComputedStyle(el);
+                        if (style.display === 'none' || style.visibility === 'hidden') continue;
+                        const value = (el.value || el.innerText || el.textContent || '').trim();
+                        if (!value || seen.has(value)) continue;
+                        seen.add(value);
+                        if (
+                            value !== originalText.trim() &&
+                            value.length > 20 &&
+                            !value.includes('Sign In') &&
+                            !value.includes('Pricing')
+                        ) {
+                            results.push(value);
+                        }
+                    }
+                }
+                results.sort((a, b) => b.length - a.length);
+                return results;
+            }""",
+            original_text,
+        )
+    except Exception:
         return ""
-    texts.sort(key=len, reverse=True)
-    return texts[0]
+
+    return candidates[0] if candidates else ""
 
 
 def _wait_for_result_and_copy(page: Page, original_text: str, timeout_sec: int, progress=None) -> str:
@@ -330,6 +338,13 @@ def _wait_for_result_and_copy(page: Page, original_text: str, timeout_sec: int, 
     deadline = time.time() + timeout_sec
 
     while time.time() < deadline:
+        # Counter StealthWriter's own scroll-to-result JS which drags the page
+        # to the bottom.  Resetting every iteration keeps the view at the top.
+        try:
+            page.evaluate("window.scrollTo(0, 0)")
+        except Exception:
+            pass
+
         # Primary: read result directly from the page DOM — no clipboard involved.
         result = _extract_result_from_page(page, original_text)
         if result:
