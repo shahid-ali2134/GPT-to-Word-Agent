@@ -502,17 +502,17 @@ def _extract_human_score(page: Page) -> int | None:
 
 def _try_rehumanize(page: Page, original_text: str, timeout_sec: int, progress=None) -> str | None:
     """Click Rehumanize (or Humanize again) and return the new result, or None on failure."""
-    btn = _find_button(page, r"rehumanize", timeout_ms=3_000)
-    if btn is None:
-        btn = _find_button(page, r"^humanize$", timeout_ms=3_000)
-    if btn is None:
-        return None
-    try:
-        btn.click(force=True, timeout=2_000)
-    except Exception:
-        btn.click()
-    page.wait_for_timeout(1_500)
-    return _wait_for_result_and_copy(page, original_text, timeout_sec, progress)
+    for pattern in (r"rehumanize", r"^humanize$"):
+        try:
+            btn = page.locator("button").filter(
+                has_text=re.compile(pattern, re.I)
+            ).first
+            btn.click(force=True, timeout=2_000)
+            page.wait_for_timeout(1_500)
+            return _wait_for_result_and_copy(page, original_text, timeout_sec, progress)
+        except Exception:
+            pass
+    return None
 
 
 def _humanize_text_sync(
@@ -546,15 +546,32 @@ def _humanize_text_sync(
     _report(progress, "Clipboard in use — hold Ctrl+C for ~2 seconds.")
     _paste_text(input_box, page, text)
 
-    humanize_button = _find_button(page, r"humanize", timeout_ms=10_000)
-    if not humanize_button:
-        raise RuntimeError("Could not find the StealthWriter Humanize button.")
-
+    # Use force=True so the click works even when the Humanize button is just
+    # below the viewport (the scroll lock keeps the page at the top, which can
+    # push the button off-screen).  Skip is_visible() — just find it in the DOM.
     _report(progress, "Starting StealthWriter humanization.")
-    try:
-        humanize_button.click(force=True, timeout=2_000)
-    except Exception:
-        humanize_button.click()
+    humanize_clicked = False
+    for _attempt in range(3):
+        try:
+            btn = page.locator("button").filter(
+                has_text=re.compile(r"^humanize$", re.I)
+            ).first
+            btn.click(force=True, timeout=2_000)
+            humanize_clicked = True
+            break
+        except Exception:
+            pass
+        try:
+            btn = page.get_by_role("button", name=re.compile(r"humanize", re.I)).first
+            btn.click(force=True, timeout=2_000)
+            humanize_clicked = True
+            break
+        except Exception:
+            pass
+        page.wait_for_timeout(500)
+
+    if not humanize_clicked:
+        raise RuntimeError("Could not click the StealthWriter Humanize button.")
 
     result = _wait_for_result_and_copy(page, text, timeout_sec, progress)
     accepted = False
