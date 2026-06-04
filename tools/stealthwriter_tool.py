@@ -63,14 +63,20 @@ def _find_humanizer_input(page: Page, timeout_ms: int = 5_000) -> Locator | None
     ]
     deadline = time.time() + (timeout_ms / 1000)
     while time.time() < deadline:
-        # Get the viewport height so we can ignore elements below the fold
-        # (StealthWriter has a FAQ section at the bottom that contains large
-        # elements which would otherwise be mistaken for the humanizer input).
+        # Scroll to top before every scan so bounding_box Y values equal the
+        # element's absolute distance from the top of the page.  Without this,
+        # a previously-scrolled page makes far-below elements appear at small Y
+        # values and they pass the viewport filter incorrectly.
         try:
-            page_height = page.evaluate("() => window.innerHeight") or 900
+            page.evaluate("window.scrollTo(0, 0)")
+            page.wait_for_timeout(150)
         except Exception:
-            page_height = 900
-        max_top = page_height * 1.5  # allow up to 1.5× viewport from the top
+            pass
+
+        try:
+            viewport_h = page.evaluate("() => window.innerHeight") or 900
+        except Exception:
+            viewport_h = 900
 
         candidates = []
         for selector in selectors:
@@ -82,13 +88,20 @@ def _find_humanizer_input(page: Page, timeout_ms: int = 5_000) -> Locator | None
             for index in range(count):
                 candidate = locator.nth(index)
                 try:
-                    if candidate.is_visible() and candidate.is_enabled():
-                        box = candidate.bounding_box() or {}
-                        top = box.get("y", 0) or 0
-                        if top > max_top:
-                            continue  # skip elements deep in the page (FAQ section etc.)
-                        area = (box.get("width", 0) or 0) * (box.get("height", 0) or 0)
-                        candidates.append((area, candidate))
+                    if not candidate.is_enabled():
+                        continue
+                    box = candidate.bounding_box()
+                    if not box:
+                        continue
+                    # With scroll=0, bounding_box Y is the absolute top of the
+                    # element from the top of the page.  The humanizer input is
+                    # always in the first viewport; FAQ / footer are far below.
+                    if box.get("y", 9999) > viewport_h:
+                        continue
+                    area = (box.get("width", 0) or 0) * (box.get("height", 0) or 0)
+                    if area < 100:
+                        continue
+                    candidates.append((area, candidate))
                 except Exception:
                     continue
 
@@ -225,6 +238,12 @@ def _select_mode(page: Page, mode_name: str, progress=None):
 
 
 def _paste_text(locator: Locator, page: Page, text: str):
+    # Scroll to top before clicking so the browser doesn't jump to a wrong element.
+    try:
+        page.evaluate("window.scrollTo(0, 0)")
+        page.wait_for_timeout(200)
+    except Exception:
+        pass
     locator.click()
     page.keyboard.press("Control+A")
     page.keyboard.press("Delete")
