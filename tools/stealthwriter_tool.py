@@ -173,6 +173,51 @@ def _wait_for_login_if_needed(page: Page, progress=None):
     raise TimeoutError("Timed out waiting for StealthWriter login or humanizer controls.")
 
 
+_SCROLL_LOCK_JS = """
+    if (!window.__swScrollLockActive) {
+        window.__swScrollLockActive = true;
+        window.scrollTo(0, 0);
+        window.addEventListener('scroll', function() {
+            if (window.__swScrollLockActive && window.scrollY > 10) {
+                window.scrollTo(0, 0);
+            }
+        }, {passive: false});
+    }
+"""
+
+def _inject_scroll_lock(page: Page) -> None:
+    """Inject a JS scroll listener that instantly resets the page to the top
+    whenever StealthWriter's own JavaScript tries to scroll it down."""
+    try:
+        page.evaluate(_SCROLL_LOCK_JS)
+    except Exception:
+        pass
+
+
+def _release_scroll_lock(page: Page) -> None:
+    """Remove the scroll lock so the page can scroll normally again."""
+    try:
+        page.evaluate("window.__swScrollLockActive = false;")
+    except Exception:
+        pass
+
+
+def _js_click(page: Page, locator) -> bool:
+    """Click an element via a native JS MouseEvent — no scroll-into-view."""
+    try:
+        el = locator.element_handle(timeout=2_000)
+        if el:
+            page.evaluate(
+                "(el) => el.dispatchEvent(new MouseEvent('click', "
+                "{bubbles: true, cancelable: true, view: window}))",
+                el,
+            )
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def _navigate_to_humanizer(page: Page, progress=None):
     cfg = _stealthwriter_config()
     base_url = cfg.get("base_url", "https://stealthwriter.ai/")
@@ -186,13 +231,10 @@ def _navigate_to_humanizer(page: Page, progress=None):
     page.goto(humanizer_url, wait_until="domcontentloaded", timeout=45_000)
     _wait_for_login_if_needed(page, progress)
 
-    # Scroll to top so the humanizer input area is in view and the FAQ
-    # section at the bottom of the page is not picked up as a candidate.
-    try:
-        page.evaluate("window.scrollTo(0, 0)")
-        page.wait_for_timeout(300)
-    except Exception:
-        pass
+    # Inject a real-time scroll lock so StealthWriter's JS cannot drag the
+    # page to the bottom while we interact with it.
+    _inject_scroll_lock(page)
+    page.wait_for_timeout(300)
 
     save_browser_state()
 
@@ -212,7 +254,7 @@ def _select_mode(page: Page, mode_name: str, progress=None):
     exact_text = page.get_by_text(mode_name, exact=True)
     try:
         if exact_text.count() and exact_text.first.is_visible():
-            exact_text.first.click()
+            _js_click(page, exact_text.first) or exact_text.first.click()
             return
     except Exception:
         pass
@@ -225,11 +267,11 @@ def _select_mode(page: Page, mode_name: str, progress=None):
         try:
             if not trigger.is_visible() or not trigger.is_enabled():
                 continue
-            trigger.click()
+            _js_click(page, trigger) or trigger.click()
             page.wait_for_timeout(500)
             option = page.get_by_text(mode_name, exact=True)
             if option.count() and option.first.is_visible():
-                option.first.click()
+                _js_click(page, option.first) or option.first.click()
                 return
         except Exception:
             continue
@@ -238,16 +280,15 @@ def _select_mode(page: Page, mode_name: str, progress=None):
 
 
 def _paste_text(locator: Locator, page: Page, text: str):
-    # Focus the element WITHOUT scrolling — avoids the fight between our
-    # window.scrollTo(0,0) and StealthWriter's own scroll-to-result JS.
-    try:
-        el = locator.element_handle(timeout=3_000)
-        if el:
-            page.evaluate("(el) => { el.focus({preventScroll: true}); el.click(); }", el)
-        else:
-            locator.click()
-    except Exception:
+    # Click via JS (no scroll-into-view) then focus with preventScroll.
+    if not _js_click(page, locator):
         locator.click()
+    try:
+        el = locator.element_handle(timeout=1_000)
+        if el:
+            page.evaluate("(el) => el.focus({preventScroll: true})", el)
+    except Exception:
+        pass
     page.keyboard.press("Control+A")
     page.keyboard.press("Delete")
     try:
@@ -361,7 +402,7 @@ def _wait_for_result_and_copy(page: Page, original_text: str, timeout_sec: int, 
                 _saved_clip = None
 
             try:
-                copy_button.click()
+                _js_click(page, copy_button) or copy_button.click()
                 page.wait_for_timeout(800)
             except Exception:
                 pass
@@ -425,7 +466,7 @@ def _try_rehumanize(page: Page, original_text: str, timeout_sec: int, progress=N
         btn = _find_button(page, r"^humanize$", timeout_ms=3_000)
     if btn is None:
         return None
-    btn.click()
+    _js_click(page, btn) or btn.click()
     page.wait_for_timeout(1_500)
     return _wait_for_result_and_copy(page, original_text, timeout_sec, progress)
 
@@ -466,7 +507,7 @@ def _humanize_text_sync(
         raise RuntimeError("Could not find the StealthWriter Humanize button.")
 
     _report(progress, "Starting StealthWriter humanization.")
-    humanize_button.click()
+    _js_click(page, humanize_button) or humanize_button.click()
 
     result = _wait_for_result_and_copy(page, text, timeout_sec, progress)
     accepted = False
