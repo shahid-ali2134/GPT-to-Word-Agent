@@ -991,13 +991,22 @@ def _apply_humanized_paragraphs(
 
 
 _MATH_BODY_RE = re.compile(
-    # LaTeX backslash patterns
+    # Raw LaTeX (backslash commands still present)
     r"\\[a-zA-Z]+[\{\( ]"
     r"|_\{|\^\{|\$\$|\\left|\\right"
     # Unicode math operators that essentially never appear in plain prose
     r"|[∑∏∫∬∭∮∧∨∀∃∄∈∉∋⊂⊃⊆⊇⊕⊗⊙⊘∓√∞∂∇≡≅≃≈∼≜]"
     # Double-struck / blackboard-bold letters used in math
     r"|[ℝℕℤℚℂℙ𝔼𝟙𝟘]"
+    # Patterns that survive _latex_to_unicode conversion (backslash stripped):
+    # \left( → left(   \right) → right)
+    r"|\bleft\s*[\(\[\{]|\bright\s*[\)\]\}]"
+    # \mathrm{...} → mathrm{...}   \mathbb → mathbb   \frac → frac
+    r"|\b(mathrm|mathbb|mathcal|mathbf|mathit|frac|sqrt|binom)\s*[\{\(]"
+    # \tag{45} → tag45   \tag{N} → tagN
+    r"|\btag\s*[\{\d]"
+    # braces containing only word chars left by incomplete brace-strip: {read}, {ij}
+    r"|\{[a-zA-Z]\w*\}"
 )
 
 

@@ -314,12 +314,20 @@ def _parse_figure_block(lines: List[str]) -> List[Block]:
 
 
 def _is_display_equation(lines: List[str]) -> bool:
-    """True when the group is a single $$latex$$ block."""
+    """True when the group is a $$latex$$ display equation block."""
     if len(lines) == 1:
         s = lines[0].strip()
         return s.startswith("$$") and s.endswith("$$") and len(s) > 4
-    # Multi-line: $$ on first line, $$ on last line
-    return lines[0].strip() == "$$" and lines[-1].strip() == "$$" and len(lines) >= 3
+    # Multi-line: $$ alone on first line AND alone on last line
+    if lines[0].strip() == "$$" and lines[-1].strip() == "$$" and len(lines) >= 3:
+        return True
+    # Multi-line where $$ is inline on the first/last content line:
+    #   $$P_{ij} = \left( ...     ← first line
+    #   ... \right) \tag{45}$$   ← last line
+    first, last = lines[0].strip(), lines[-1].strip()
+    if first.startswith("$$") and last.endswith("$$"):
+        return True
+    return False
 
 
 def _is_standalone_latex_equation(lines: List[str]) -> bool:
@@ -379,12 +387,15 @@ def _is_standalone_latex_equation(lines: List[str]) -> bool:
 
 
 def _parse_display_equation(lines: List[str]) -> Block:
-    if len(lines) == 1:
-        latex = lines[0].strip()[2:-2].strip()
-    else:
-        latex = "\n".join(lines[1:-1]).strip()
     b = Block("equation")
-    b.latex = latex
+    if len(lines) == 1:
+        b.latex = lines[0].strip()[2:-2].strip()
+    elif lines[0].strip() == "$$" and lines[-1].strip() == "$$":
+        b.latex = "\n".join(lines[1:-1]).strip()
+    else:
+        # $$ inline on first/last line — strip the leading and trailing $$
+        joined = "\n".join(line.strip() for line in lines)
+        b.latex = joined[2:-2].strip()
     return b
 
 
