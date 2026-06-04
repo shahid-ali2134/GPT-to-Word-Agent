@@ -249,15 +249,20 @@ def _navigate_to_humanizer(page: Page, progress=None):
 def _select_mode(page: Page, mode_name: str, progress=None):
     _report(progress, f"Selecting StealthWriter mode: {mode_name}.")
 
-    selects = page.locator("select")
-    for index in range(selects.count()):
-        select = selects.nth(index)
-        try:
-            select.select_option(label=mode_name, timeout=1_500)
-            return
-        except Exception:
-            continue
+    # 1. Button-based UI (current StealthWriter design) ─────────────────────
+    #    Look for a visible button whose text matches the mode name exactly.
+    exact_btn = page.get_by_role("button", name=re.compile(re.escape(mode_name), re.I))
+    try:
+        if exact_btn.count():
+            for i in range(exact_btn.count()):
+                btn = exact_btn.nth(i)
+                if btn.is_visible():
+                    _js_click(page, btn) or btn.click()
+                    return
+    except Exception:
+        pass
 
+    # Also try any visible element whose text content matches exactly.
     exact_text = page.get_by_text(mode_name, exact=True)
     try:
         if exact_text.count() and exact_text.first.is_visible():
@@ -266,8 +271,23 @@ def _select_mode(page: Page, mode_name: str, progress=None):
     except Exception:
         pass
 
+    # 2. Dropdown-based UI (legacy) ─────────────────────────────────────────
+    #    Only try visible <select> elements with a very short timeout so we
+    #    don't burn seconds on hidden/non-matching selects.
+    selects = page.locator("select")
+    for index in range(selects.count()):
+        select = selects.nth(index)
+        try:
+            if not select.is_visible():
+                continue
+            select.select_option(label=mode_name, timeout=200)
+            return
+        except Exception:
+            continue
+
+    # 3. Dropdown-trigger fallback ───────────────────────────────────────────
     dropdown_triggers = page.locator("button, [role='button']").filter(
-        has_text=re.compile(r"ghost|mode|model|mini|pro", re.I)
+        has_text=re.compile(r"ghost|mode|model|mini|pro|legacy", re.I)
     )
     for index in range(dropdown_triggers.count()):
         trigger = dropdown_triggers.nth(index)
@@ -275,7 +295,7 @@ def _select_mode(page: Page, mode_name: str, progress=None):
             if not trigger.is_visible() or not trigger.is_enabled():
                 continue
             _js_click(page, trigger) or trigger.click()
-            page.wait_for_timeout(500)
+            page.wait_for_timeout(300)
             option = page.get_by_text(mode_name, exact=True)
             if option.count() and option.first.is_visible():
                 _js_click(page, option.first) or option.first.click()
