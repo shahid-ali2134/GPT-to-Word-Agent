@@ -40,6 +40,12 @@ def _ensure_browser(browser_name: str = "chrome") -> Page:
         return _page
 
     _page = open_new_tab(browser_name)
+    # Register scroll-lock init script before any navigation so it executes
+    # before StealthWriter's own JS on every page load.
+    try:
+        _page.add_init_script(_SCROLL_LOCK_INIT_JS)
+    except Exception:
+        pass
     return _page
 
 
@@ -173,33 +179,37 @@ def _wait_for_login_if_needed(page: Page, progress=None):
     raise TimeoutError("Timed out waiting for StealthWriter login or humanizer controls.")
 
 
-_SCROLL_LOCK_JS = """
-    if (!window.__swScrollLockActive) {
-        window.__swScrollLockActive = true;
+# Injected via add_init_script() so it runs BEFORE any StealthWriter JS.
+# Keeps the page pinned at the top on the humanizer URL only.
+_SCROLL_LOCK_INIT_JS = """
+(function() {
+    var _lock = false;
+
+    function activate() {
+        if (_lock) return;
+        _lock = true;
         window.scrollTo(0, 0);
         window.addEventListener('scroll', function() {
-            if (window.__swScrollLockActive && window.scrollY > 10) {
+            if (_lock && window.scrollY > 10) {
                 window.scrollTo(0, 0);
             }
         }, {passive: false});
     }
+
+    function checkAndActivate() {
+        if (location.href.indexOf('humanizer') !== -1) {
+            activate();
+        }
+    }
+
+    // Run immediately (covers DOMContentLoaded and earlier)
+    checkAndActivate();
+    // Re-check after DOM is ready in case URL changed during redirect
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', checkAndActivate);
+    }
+})();
 """
-
-def _inject_scroll_lock(page: Page) -> None:
-    """Inject a JS scroll listener that instantly resets the page to the top
-    whenever StealthWriter's own JavaScript tries to scroll it down."""
-    try:
-        page.evaluate(_SCROLL_LOCK_JS)
-    except Exception:
-        pass
-
-
-def _release_scroll_lock(page: Page) -> None:
-    """Remove the scroll lock so the page can scroll normally again."""
-    try:
-        page.evaluate("window.__swScrollLockActive = false;")
-    except Exception:
-        pass
 
 
 def _js_click(page: Page, locator) -> bool:
@@ -230,12 +240,6 @@ def _navigate_to_humanizer(page: Page, progress=None):
     _report(progress, "Opening StealthWriter humanizer page.")
     page.goto(humanizer_url, wait_until="domcontentloaded", timeout=45_000)
     _wait_for_login_if_needed(page, progress)
-
-    # Inject a real-time scroll lock so StealthWriter's JS cannot drag the
-    # page to the bottom while we interact with it.
-    _inject_scroll_lock(page)
-    page.wait_for_timeout(300)
-
     save_browser_state()
 
 
