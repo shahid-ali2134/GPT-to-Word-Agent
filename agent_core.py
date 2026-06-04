@@ -542,8 +542,10 @@ def _resolve_figures(
             continue  # malformed placeholder — no figure number detected
 
         if fig_num in resolved:
-            result[i] = resolved[fig_num]
-            report(f"Figure {fig_num} already downloaded — reusing.")
+            # Replace the duplicate placeholder with an artifact (silently
+            # skipped by the Word writer) so the figure is not inserted twice.
+            result[i] = Block("artifact")
+            report(f"Figure {fig_num} already placed — skipping duplicate placeholder.")
             continue
 
         try:
