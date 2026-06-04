@@ -63,6 +63,15 @@ def _find_humanizer_input(page: Page, timeout_ms: int = 5_000) -> Locator | None
     ]
     deadline = time.time() + (timeout_ms / 1000)
     while time.time() < deadline:
+        # Get the viewport height so we can ignore elements below the fold
+        # (StealthWriter has a FAQ section at the bottom that contains large
+        # elements which would otherwise be mistaken for the humanizer input).
+        try:
+            page_height = page.evaluate("() => window.innerHeight") or 900
+        except Exception:
+            page_height = 900
+        max_top = page_height * 1.5  # allow up to 1.5× viewport from the top
+
         candidates = []
         for selector in selectors:
             locator = page.locator(selector)
@@ -75,6 +84,9 @@ def _find_humanizer_input(page: Page, timeout_ms: int = 5_000) -> Locator | None
                 try:
                     if candidate.is_visible() and candidate.is_enabled():
                         box = candidate.bounding_box() or {}
+                        top = box.get("y", 0) or 0
+                        if top > max_top:
+                            continue  # skip elements deep in the page (FAQ section etc.)
                         area = (box.get("width", 0) or 0) * (box.get("height", 0) or 0)
                         candidates.append((area, candidate))
                 except Exception:
@@ -160,6 +172,15 @@ def _navigate_to_humanizer(page: Page, progress=None):
     _report(progress, "Opening StealthWriter humanizer page.")
     page.goto(humanizer_url, wait_until="domcontentloaded", timeout=45_000)
     _wait_for_login_if_needed(page, progress)
+
+    # Scroll to top so the humanizer input area is in view and the FAQ
+    # section at the bottom of the page is not picked up as a candidate.
+    try:
+        page.evaluate("window.scrollTo(0, 0)")
+        page.wait_for_timeout(300)
+    except Exception:
+        pass
+
     save_browser_state()
 
 
