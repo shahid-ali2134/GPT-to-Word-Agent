@@ -160,6 +160,63 @@ def _append_body_from_lines(blocks: List[Block], lines: List[str]):
         blocks.append(Block("body", parse_inline(content)))
 
 
+def _split_body_and_equations(lines: List[str]) -> List[Block]:
+    """
+    Split a mixed paragraph group into alternating body and equation blocks.
+
+    Handles the case where ChatGPT writes a display equation ($$...$$) in the
+    same paragraph group as surrounding prose (no blank line separator).  Without
+    this split, the whole group becomes one body block and the equation is garbled
+    by parse_inline / _latex_to_unicode before reaching Word.
+    """
+    result: List[Block] = []
+    body_buf: List[str] = []
+    eq_buf: List[str] = []
+    in_eq = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Single-line: $$...$$ — whole equation on one line
+        if not in_eq and stripped.startswith("$$") and stripped.endswith("$$") and len(stripped) > 4:
+            if body_buf:
+                _append_body_from_lines(result, body_buf)
+                body_buf = []
+            b = Block("equation")
+            b.latex = stripped[2:-2].strip()
+            result.append(b)
+            continue
+
+        # Start of multi-line equation (opens with $$ but doesn't close on same line)
+        if not in_eq and stripped.startswith("$$") and not stripped.endswith("$$"):
+            if body_buf:
+                _append_body_from_lines(result, body_buf)
+                body_buf = []
+            in_eq = True
+            eq_buf = [stripped]
+            continue
+
+        # Inside a multi-line equation
+        if in_eq:
+            eq_buf.append(stripped)
+            if stripped.endswith("$$"):
+                result.append(_parse_display_equation(eq_buf))
+                eq_buf = []
+                in_eq = False
+            continue
+
+        # Regular prose line
+        body_buf.append(line)
+
+    # Flush any unclosed equation as body (shouldn't happen with well-formed input)
+    if in_eq and eq_buf:
+        body_buf.extend(eq_buf)
+    if body_buf:
+        _append_body_from_lines(result, body_buf)
+
+    return result
+
+
 def _strip_inline_markers(text: str) -> str:
     return _INLINE_MARKER_RE.sub("", text).strip()
 
@@ -496,6 +553,11 @@ def parse_markdown(text: str) -> List[Block]:
                 blocks.append(eq_block)
 
             else:
-                _append_body_from_lines(blocks, lines)
+                # If any line contains $$, split into body + equation sub-blocks
+                # so embedded display equations are not garbled by parse_inline.
+                if any("$$" in ln for ln in lines):
+                    blocks.extend(_split_body_and_equations(lines))
+                else:
+                    _append_body_from_lines(blocks, lines)
 
     return blocks
