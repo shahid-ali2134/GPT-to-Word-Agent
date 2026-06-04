@@ -412,13 +412,39 @@ def _extract_result_from_page(page: Page, original_text: str) -> str:
     return candidates[0] if candidates else ""
 
 
+def _is_humanizing(page: Page) -> bool:
+    """Return True when StealthWriter is actively processing (spinner visible,
+    or Humanize button is disabled/loading).  Used to log progress messages."""
+    try:
+        return page.evaluate("""
+            () => {
+                // Loading spinner anywhere on the page
+                const spinners = document.querySelectorAll(
+                    '[class*="spinner" i],[class*="loading" i],[class*="progress" i],' +
+                    '[aria-busy="true"],[data-loading="true"]'
+                );
+                for (const s of spinners) {
+                    const st = window.getComputedStyle(s);
+                    if (st.display !== 'none' && st.visibility !== 'hidden') return true;
+                }
+                // Humanize button disabled (StealthWriter disables it while running)
+                for (const btn of document.querySelectorAll('button')) {
+                    if (/humanize/i.test(btn.textContent) && btn.disabled) return true;
+                }
+                return false;
+            }
+        """)
+    except Exception:
+        return False
+
+
 def _wait_for_result_and_copy(page: Page, original_text: str, timeout_sec: int, progress=None) -> str:
     _report(progress, "Waiting for StealthWriter to finish humanizing.")
     deadline = time.time() + timeout_sec
+    last_progress = time.time()
 
     while time.time() < deadline:
-        # Counter StealthWriter's own scroll-to-result JS which drags the page
-        # to the bottom.  Resetting every iteration keeps the view at the top.
+        # Counter StealthWriter's own scroll-to-result JS.
         try:
             page.evaluate("window.scrollTo(0, 0)")
         except Exception:
@@ -429,9 +455,7 @@ def _wait_for_result_and_copy(page: Page, original_text: str, timeout_sec: int, 
         if result:
             return result
 
-        # Fallback: click the Copy button and read via clipboard only when DOM
-        # extraction found nothing.  Save and restore the user's clipboard so
-        # their copied content survives the operation.
+        # Fallback: click the Copy button and read via clipboard.
         copy_button = _find_button(page, r"copy|copied", timeout_ms=1_000)
         if copy_button:
             try:
@@ -458,6 +482,15 @@ def _wait_for_result_and_copy(page: Page, original_text: str, timeout_sec: int, 
 
             if copied and copied != original_text.strip() and len(copied) > 20:
                 return copied
+
+        # Report progress every 30 s so the user knows we are still waiting.
+        now = time.time()
+        if progress and now - last_progress >= 30:
+            elapsed = int(now - (deadline - timeout_sec))
+            remaining = int(deadline - now)
+            still = "still humanizing…" if _is_humanizing(page) else "waiting for result…"
+            _report(progress, f"StealthWriter {still} ({elapsed}s elapsed, {remaining}s remaining)")
+            last_progress = now
 
         page.wait_for_timeout(1_000)
 
@@ -531,7 +564,7 @@ def _humanize_text_sync(
 
     cfg = _stealthwriter_config()
     mode_name = mode_name or cfg.get("mode", "Ghost 5.2 Pro")
-    timeout_sec = int(cfg.get("timeout_sec", 180))
+    timeout_sec = int(cfg.get("timeout_sec", 300))
     threshold = int(cfg.get("human_score_threshold", 70))
     max_rehumanize = int(cfg.get("max_rehumanize", 2))
 
