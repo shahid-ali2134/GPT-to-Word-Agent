@@ -520,6 +520,17 @@ _PREAMBLE_RE = re.compile(
 )
 
 
+# Tracks figure numbers already resolved this chapter — persists across all
+# _resolve_figures() calls (one per section) so the same figure is never
+# requested twice even when it appears in two different section responses.
+_chapter_resolved_figs: set[int] = set()
+
+
+def _clear_chapter_resolved_figs() -> None:
+    global _chapter_resolved_figs
+    _chapter_resolved_figs.clear()
+
+
 def _resolve_figures(
     blocks: list[Block],
     word_file_path: str,
@@ -536,10 +547,6 @@ def _resolve_figures(
     os.makedirs(figures_dir, exist_ok=True)
 
     result = list(blocks)
-    # Map fig_num → already-resolved Block so duplicate placeholders (ChatGPT
-    # sometimes writes the placement line twice) reuse the downloaded image
-    # instead of sending a second "Draw figure N" request.
-    resolved: dict[int, Block] = {}
 
     for i, block in enumerate(result):
         if block.block_type != "figure_placeholder":
@@ -549,11 +556,11 @@ def _resolve_figures(
         if fig_num == 0:
             continue  # malformed placeholder — no figure number detected
 
-        if fig_num in resolved:
-            # Replace the duplicate placeholder with an artifact (silently
-            # skipped by the Word writer) so the figure is not inserted twice.
+        if fig_num in _chapter_resolved_figs:
+            # Already requested this chapter (either same section or a previous
+            # section) — skip silently so the figure is not drawn or inserted twice.
             result[i] = Block("artifact")
-            report(f"Figure {fig_num} already placed — skipping duplicate placeholder.")
+            report(f"Figure {fig_num} already placed this chapter — skipping duplicate.")
             continue
 
         try:
@@ -565,7 +572,7 @@ def _resolve_figures(
             )
 
         if result[i].block_type == "figure":
-            resolved[fig_num] = result[i]
+            _chapter_resolved_figs.add(fig_num)
 
     return result
 
@@ -1124,6 +1131,7 @@ def write_complete_chapter(
     # Reset figure-src exclusion list once per chapter so cross-section deduplication works.
     # (Clearing inside _resolve_figures was wrong — it wiped Figure 1's src before Figure 2.)
     clear_figure_src_cache()
+    _clear_chapter_resolved_figs()
 
     report(f"Opening ChatGPT chat for project '{project_name}'.")
     navigate_result = navigate_to_chat(
@@ -1223,6 +1231,7 @@ def write_complete_chapter_v2(
             progress(message)
 
     clear_figure_src_cache()
+    _clear_chapter_resolved_figs()
 
     report(f"Opening ChatGPT chat for project '{project_name}'.")
     navigate_result = navigate_to_chat(
@@ -1330,6 +1339,7 @@ def write_sections(
             progress(message)
 
     clear_figure_src_cache()
+    _clear_chapter_resolved_figs()
 
     report(f"Opening ChatGPT chat for project '{project_name}'.")
     navigate_result = navigate_to_chat(
@@ -1411,6 +1421,7 @@ def finish_chapter(
             progress(message)
 
     clear_figure_src_cache()
+    _clear_chapter_resolved_figs()
 
     report(f"Opening ChatGPT chat for project '{project_name}'.")
     navigate_result = navigate_to_chat(
