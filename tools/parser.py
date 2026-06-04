@@ -306,21 +306,23 @@ def _extract_figure_number(text: str) -> int:
 
 def _is_figure_block(lines: List[str]) -> bool:
     """
-    True when a group is primarily about a figure rather than prose.
+    True when a group is a figure placement or caption — NOT a prose reference.
 
-    Catches all common GPT formats:
-      • Placement instructions  – "Placement: Insert Fig. 11 near …"
-      • Imperative placements   – "Insert Figure 12 here." / "Add Fig. 3 below."
-      • Caption lines           – "Fig. 11. Title." / "Figure 11: Title."
-      • Figure-only short lines – a single line that IS a figure reference
-    Avoids matching inline prose that merely *mentions* a figure in passing.
+    Catches:
+      • Explicit placement  – "Placement: Insert Figure 11 here."
+      • Imperative insert   – "Insert Figure 12 here." / "Add Fig. 3 below."
+      • Caption label       – "Fig. 11. Title." / "Figure 11: Title."
+
+    Deliberately does NOT catch short prose references such as
+    "as illustrated in Figure 38." or "see Figure 38 for details." —
+    those are body text and should not trigger a draw request.
     """
     if not lines:
         return False
 
     first = _strip_inline_markers(lines[0])
 
-    # Explicit placement instruction
+    # Explicit "Placement:" instruction
     if _PLACEMENT_LINE_RE.match(first):
         return True
 
@@ -330,11 +332,6 @@ def _is_figure_block(lines: List[str]) -> bool:
 
     # Caption / label line – starts with "Fig. X." or "Figure X:" etc.
     if _FIGURE_LABEL_START_RE.match(first):
-        return True
-
-    # Short standalone line that is ONLY a figure reference
-    # e.g. "Fig. 11" or "Figure 11 goes here." (≤ 10 words, contains fig ref)
-    if _FIGURE_REF_RE.search(first) and len(first.split()) <= 10:
         return True
 
     return False
