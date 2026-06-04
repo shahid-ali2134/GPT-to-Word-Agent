@@ -249,31 +249,43 @@ def _navigate_to_humanizer(page: Page, progress=None):
 def _select_mode(page: Page, mode_name: str, progress=None):
     _report(progress, f"Selecting StealthWriter mode: {mode_name}.")
 
+    # Helper: click without scroll-into-view using force=True (trusted event).
+    # Preferred over _js_click because React/Vue components on StealthWriter
+    # ignore untrusted JS dispatchEvent clicks.
+    def _force_click(locator) -> bool:
+        try:
+            locator.click(force=True, timeout=1_500)
+            return True
+        except Exception:
+            return False
+
     # 1. Button-based UI (current StealthWriter design) ─────────────────────
-    #    Look for a visible button whose text matches the mode name exactly.
     exact_btn = page.get_by_role("button", name=re.compile(re.escape(mode_name), re.I))
     try:
         if exact_btn.count():
             for i in range(exact_btn.count()):
                 btn = exact_btn.nth(i)
                 if btn.is_visible():
-                    _js_click(page, btn) or btn.click()
-                    return
+                    if _force_click(btn):
+                        page.wait_for_timeout(300)
+                        return
     except Exception:
         pass
 
-    # Also try any visible element whose text content matches exactly.
+    # Also try any visible element whose text content matches the mode name.
     exact_text = page.get_by_text(mode_name, exact=True)
     try:
-        if exact_text.count() and exact_text.first.is_visible():
-            _js_click(page, exact_text.first) or exact_text.first.click()
-            return
+        if exact_text.count():
+            for i in range(exact_text.count()):
+                el = exact_text.nth(i)
+                if el.is_visible():
+                    if _force_click(el):
+                        page.wait_for_timeout(300)
+                        return
     except Exception:
         pass
 
     # 2. Dropdown-based UI (legacy) ─────────────────────────────────────────
-    #    Only try visible <select> elements with a very short timeout so we
-    #    don't burn seconds on hidden/non-matching selects.
     selects = page.locator("select")
     for index in range(selects.count()):
         select = selects.nth(index)
@@ -294,12 +306,12 @@ def _select_mode(page: Page, mode_name: str, progress=None):
         try:
             if not trigger.is_visible() or not trigger.is_enabled():
                 continue
-            _js_click(page, trigger) or trigger.click()
+            _force_click(trigger)
             page.wait_for_timeout(300)
             option = page.get_by_text(mode_name, exact=True)
             if option.count() and option.first.is_visible():
-                _js_click(page, option.first) or option.first.click()
-                return
+                if _force_click(option.first):
+                    return
         except Exception:
             continue
 
@@ -307,15 +319,14 @@ def _select_mode(page: Page, mode_name: str, progress=None):
 
 
 def _paste_text(locator: Locator, page: Page, text: str):
-    # Click via JS (no scroll-into-view) then focus with preventScroll.
-    if not _js_click(page, locator):
-        locator.click()
+    # Use force=True: trusted Playwright event, no scroll-into-view.
     try:
-        el = locator.element_handle(timeout=1_000)
-        if el:
-            page.evaluate("(el) => el.focus({preventScroll: true})", el)
+        locator.click(force=True, timeout=2_000)
     except Exception:
-        pass
+        try:
+            locator.focus()
+        except Exception:
+            pass
     page.keyboard.press("Control+A")
     page.keyboard.press("Delete")
     try:
@@ -429,7 +440,10 @@ def _wait_for_result_and_copy(page: Page, original_text: str, timeout_sec: int, 
                 _saved_clip = None
 
             try:
-                _js_click(page, copy_button) or copy_button.click()
+                try:
+                    copy_button.click(force=True, timeout=2_000)
+                except Exception:
+                    copy_button.click()
                 page.wait_for_timeout(800)
             except Exception:
                 pass
@@ -493,7 +507,10 @@ def _try_rehumanize(page: Page, original_text: str, timeout_sec: int, progress=N
         btn = _find_button(page, r"^humanize$", timeout_ms=3_000)
     if btn is None:
         return None
-    _js_click(page, btn) or btn.click()
+    try:
+        btn.click(force=True, timeout=2_000)
+    except Exception:
+        btn.click()
     page.wait_for_timeout(1_500)
     return _wait_for_result_and_copy(page, original_text, timeout_sec, progress)
 
@@ -534,7 +551,10 @@ def _humanize_text_sync(
         raise RuntimeError("Could not find the StealthWriter Humanize button.")
 
     _report(progress, "Starting StealthWriter humanization.")
-    _js_click(page, humanize_button) or humanize_button.click()
+    try:
+        humanize_button.click(force=True, timeout=2_000)
+    except Exception:
+        humanize_button.click()
 
     result = _wait_for_result_and_copy(page, text, timeout_sec, progress)
     accepted = False
