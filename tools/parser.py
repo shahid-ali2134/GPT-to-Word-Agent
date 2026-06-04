@@ -121,11 +121,23 @@ def _latex_to_unicode(text: str) -> str:
 
 
 def parse_inline(text: str) -> List[Run]:
-    """Split inline markdown (***bold+italic***, **bold**, *italic*) into Runs.
-    Inline $$latex$$ tokens are converted to Unicode symbols (italic run)."""
+    """Split inline markdown and math tokens into Runs.
+
+    Handles (in priority order):
+      ***bold+italic***  **bold**  *italic*
+      $$latex$$  — double-dollar inline/display math  → Unicode italic run
+      $latex$    — single-dollar inline math          → Unicode italic run
+      plain text
+    """
     runs: List[Run] = []
     pattern = re.compile(
-        r"(\*{3}(.+?)\*{3}|\*{2}(.+?)\*{2}|\*(.+?)\*|\$\$(.+?)\$\$|([^*$]+))"
+        r"(\*{3}(.+?)\*{3}"          # group 1/2  ***bold+italic***
+        r"|\*{2}(.+?)\*{2}"          # group 3    **bold**
+        r"|\*(.+?)\*"                 # group 4    *italic*
+        r"|\$\$(.+?)\$\$"            # group 5    $$latex$$
+        r"|\$([^$\n]+?)\$"           # group 6    $latex$  (no newline inside)
+        r"|([^*$]+))",               # group 7    plain text
+        re.DOTALL,
     )
     for match in pattern.finditer(text):
         if match.group(2):
@@ -134,10 +146,12 @@ def parse_inline(text: str) -> List[Run]:
             runs.append(Run(match.group(3), bold=True))
         elif match.group(4):
             runs.append(Run(match.group(4), italic=True))
-        elif match.group(5):  # inline $$latex$$  → Unicode italic
+        elif match.group(5):  # $$latex$$ → Unicode italic
             runs.append(Run(_latex_to_unicode(match.group(5)), italic=True))
-        elif match.group(6):
-            runs.append(Run(match.group(6)))
+        elif match.group(6):  # $latex$ → Unicode italic
+            runs.append(Run(_latex_to_unicode(match.group(6)), italic=True))
+        elif match.group(7):
+            runs.append(Run(match.group(7)))
     return runs if runs else [Run(text)]
 
 
