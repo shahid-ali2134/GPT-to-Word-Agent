@@ -133,7 +133,17 @@ From now on, write every mathematical expression using LaTeX syntax:
   \\mathbb{R}    \\mathcal{L}      \\alpha \\beta \\gamma \\delta
   \\left\\{ ... \\right\\}   \\begin{cases} ... \\end{cases}
 
-• NEVER write equations as plain text, Unicode math symbols (×, ∑, ∈, ≤), or words.\
+• NEVER write equations as plain text, Unicode math symbols (×, ∑, ∈, ≤), or words.
+
+EQUATION QUANTITY RULE:
+• Include a meaningful number of equations throughout each chapter — do not write sections \
+with no equations at all unless the topic is purely conceptual and mathematics genuinely do not apply.
+• Vary the number of equations per section according to how mathematical the topic is:
+  - Highly technical subsections: 3–5 display equations plus several inline expressions.
+  - Moderately technical subsections: 1–3 display equations plus inline expressions where natural.
+  - Conceptual subsections with some formalism: at least 1 display equation or definition.
+• Do NOT cluster all equations in one section — spread them naturally across the chapter.
+• Every equation must be referenced in the surrounding prose (e.g. "as expressed in Equation (N)").\
 """
 
 _INSTRUCT_LENGTH = """\
@@ -276,6 +286,14 @@ MATHEMATICAL EQUATIONS
 • Inline expressions:           $  LaTeX  $
 • Use full LaTeX: \\frac{a}{b}, \\sum_{i=1}^{n}, \\begin{matrix}…\\end{matrix}, \\mathbb{R}, etc.
 • NEVER use plain-text math or Unicode symbols (∑, ×, ∈, ≤…).
+• Include equations throughout the chapter — do NOT leave entire sections without any mathematics \
+unless the content is purely conceptual.
+• Vary the count by how technical the subsection is:
+    - Highly technical: 3–5 display equations + inline expressions.
+    - Moderately technical: 1–3 display equations + inline expressions where natural.
+    - Conceptual with some formalism: at least 1 display equation or formal definition.
+• Spread equations across all sections — do NOT cluster them all in one place.
+• Every display equation must be cited in the surrounding prose (e.g. "as shown in Equation (N)").
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FIGURES
