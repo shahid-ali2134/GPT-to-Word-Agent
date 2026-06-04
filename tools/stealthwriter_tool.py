@@ -579,32 +579,52 @@ def _humanize_text_sync(
     _report(progress, "Clipboard in use — hold Ctrl+C for ~2 seconds.")
     _paste_text(input_box, page, text)
 
-    # Use force=True so the click works even when the Humanize button is just
-    # below the viewport (the scroll lock keeps the page at the top, which can
-    # push the button off-screen).  Skip is_visible() — just find it in the DOM.
-    _report(progress, "Starting StealthWriter humanization.")
-    humanize_clicked = False
-    for _attempt in range(3):
-        try:
-            btn = page.locator("button").filter(
-                has_text=re.compile(r"^humanize$", re.I)
-            ).first
-            btn.click(force=True, timeout=2_000)
-            humanize_clicked = True
-            break
-        except Exception:
-            pass
-        try:
-            btn = page.get_by_role("button", name=re.compile(r"humanize", re.I)).first
-            btn.click(force=True, timeout=2_000)
-            humanize_clicked = True
-            break
-        except Exception:
-            pass
-        page.wait_for_timeout(500)
+    # Give StealthWriter's JS a moment to process the pasted text (word count,
+    # button enable state, etc.) before we try to click Humanize.
+    page.wait_for_timeout(1_000)
 
-    if not humanize_clicked:
-        raise RuntimeError("Could not click the StealthWriter Humanize button.")
+    _report(progress, "Starting StealthWriter humanization.")
+
+    def _try_click_humanize() -> bool:
+        """Click the Humanize button with multiple fallback methods.
+        Returns True when humanization has verifiably started."""
+        selectors = [
+            lambda: page.locator("button").filter(
+                has_text=re.compile(r"^humanize$", re.I)).first,
+            lambda: page.locator("button").filter(
+                has_text=re.compile(r"humanize", re.I)).first,
+            lambda: page.get_by_role("button", name=re.compile(r"humanize", re.I)).first,
+        ]
+        for get_btn in selectors:
+            for click_method in ("force", "regular", "keyboard"):
+                try:
+                    btn = get_btn()
+                    if click_method == "force":
+                        btn.click(force=True, timeout=2_000)
+                    elif click_method == "regular":
+                        btn.click(timeout=2_000)
+                    else:
+                        btn.focus(timeout=1_000)
+                        page.keyboard.press("Enter")
+                    page.wait_for_timeout(1_000)
+                    if _is_humanizing(page):
+                        return True
+                except Exception:
+                    pass
+        return False
+
+    humanize_started = False
+    for _attempt in range(4):
+        if _try_click_humanize():
+            humanize_started = True
+            break
+        _report(progress, f"Humanize button not responding — retrying (attempt {_attempt + 1}/4)…")
+        page.wait_for_timeout(1_000)
+
+    if not humanize_started:
+        # Last resort: result might already be there (e.g. fast models) even
+        # without a detectable spinner — proceed to the result-wait loop.
+        _report(progress, "Warning: could not confirm humanization started — proceeding anyway.")
 
     result = _wait_for_result_and_copy(page, text, timeout_sec, progress)
     accepted = False
