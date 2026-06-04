@@ -166,9 +166,14 @@ Step 1 — placement line (where the figure goes in the text):
   Write on its own line:   Placement: Insert Figure N here.
   Example:                 Placement: Insert Figure 12 here.
 
-Step 2 — caption line (immediately after the placement line):
-  Write:   Fig. N. [Descriptive caption text ending with a period.]
-  Example: Fig. 12. Core components of the agentic ML pipeline.
+Step 2 — caption line (MANDATORY — immediately after the placement line, NO EXCEPTIONS):
+  Write:   Fig. N. [One concise sentence describing what the figure shows, ending with a period.]
+  Example: Fig. 12. Core components of the agentic ML pipeline showing perception, reasoning, and action layers.
+
+  CAPTION RULES:
+  • The caption is REQUIRED for every figure — never write a placement line without a caption line.
+  • Keep it to ONE sentence — concise, specific, and descriptive enough for the figure to be drawn from it.
+  • Do NOT write vague captions like "Figure 12." or "See above." — always describe the content.
 
 Rules:
 • Every chapter must contain AT LEAST 4–5 figures spread across its sections.
@@ -178,7 +183,7 @@ Rules:
 • Do NOT use placeholder text like [Figure N] or (see figure below).
 
 Visual design rules (ChatGPT will draw each figure):
-• Every figure must be UNIQUE in style and layout — do NOT repeat the same visual format twice, for example do not always use "infographic" style, use a mixture of stlyes.
+• Every figure must be UNIQUE in style and layout — do NOT repeat the same visual format twice, for example do not always use "infographic" style, use a mixture of styles.
 • Vary the visual style across figures: use solid-color diagrams for some, gradient fills for others, \
 flow charts, architecture diagrams, layered block diagrams, network graphs, timeline visuals, \
 heatmaps, or any other distinct visual form that fits the content.
@@ -299,18 +304,21 @@ unless the content is purely conceptual.
 FIGURES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 • Every chapter must contain AT LEAST 4–5 figures spread across its sections.
-• Where a figure belongs, write a placement line on its own:
+• For every figure, write BOTH lines — placement then caption — with NO EXCEPTIONS:
     Placement: Insert Figure N here.
-• Immediately after, write the caption:
-    Fig. N. [Caption text ending in a period.]
+    Fig. N. [One concise sentence describing what the figure shows, ending with a period.]
+  Example:
+    Placement: Insert Figure 12 here.
+    Fig. 12. Core components of the agentic ML pipeline showing perception, reasoning, and action layers.
+• The caption is MANDATORY — never write a placement line without a caption on the very next line.
+• Caption must be ONE sentence: concise, specific, and descriptive enough to draw the figure from it alone.
 • Figure numbers are SEQUENTIAL across the whole book (e.g., 10, 11, 12 …).
 • Do NOT write "Draw Figure N" — the agent handles that automatically.
-• Do NOT use placeholder text like [Figure N].
+• Do NOT use vague captions like "Figure 12." or "See above." — always describe the actual content.
 • Every figure must be UNIQUE in style — do NOT repeat the same visual format twice in a chapter.
-• Vary styles across figures: solid-color diagrams, gradients, flow charts, architecture diagrams, \
-network graphs, timelines, heatmaps, layered blocks, etc.
+• Vary styles: solid-color diagrams, gradients, flow charts, architecture diagrams, network graphs, \
+timelines, heatmaps, layered blocks, etc.
 • Make every figure visually attractive: clean layout, meaningful colors, clear labels, good whitespace.
-• Write a detailed enough caption so the figure can be drawn accurately from it alone.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 TABLES
