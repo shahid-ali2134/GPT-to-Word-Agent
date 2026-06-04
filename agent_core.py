@@ -528,6 +528,11 @@ def _resolve_figures(
     os.makedirs(figures_dir, exist_ok=True)
 
     result = list(blocks)
+    # Map fig_num → already-resolved Block so duplicate placeholders (ChatGPT
+    # sometimes writes the placement line twice) reuse the downloaded image
+    # instead of sending a second "Draw figure N" request.
+    resolved: dict[int, Block] = {}
+
     for i, block in enumerate(result):
         if block.block_type != "figure_placeholder":
             continue
@@ -536,9 +541,11 @@ def _resolve_figures(
         if fig_num == 0:
             continue  # malformed placeholder — no figure number detected
 
-        # Wrap the entire per-figure attempt so that any unexpected exception
-        # (Playwright crash, screenshot error, etc.) leaves the surrounding
-        # section text intact — the placeholder stays and the section is written.
+        if fig_num in resolved:
+            result[i] = resolved[fig_num]
+            report(f"Figure {fig_num} already downloaded — reusing.")
+            continue
+
         try:
             _resolve_single_figure(result, i, fig_num, figures_dir, progress, report)
         except Exception as exc:
@@ -546,6 +553,9 @@ def _resolve_figures(
                 f"Warning: Figure {fig_num} resolution raised an unexpected error "
                 f"({exc}). Section text will still be written; placeholder used."
             )
+
+        if result[i].block_type == "figure":
+            resolved[fig_num] = result[i]
 
     return result
 
