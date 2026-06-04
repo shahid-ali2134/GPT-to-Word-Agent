@@ -81,6 +81,16 @@ only if they are concluding or summary sections.
 - Do NOT write a section as a flat block of paragraphs with no subsections — always break the content \
 into labelled subsections.
 
+SECTION INTRODUCTION RULE:
+- After every main section heading (## X.Y), write 1–2 introductory paragraphs BEFORE the first \
+subsection (### X.Y.1). These paragraphs should introduce and frame what the section covers.
+- Do NOT jump directly from ## X.Y to ### X.Y.1 with no text in between.
+- Example structure:
+    ## 3.2  Perception and Context Interpretation
+    [1–2 introductory paragraphs here]
+    ### 3.2.1  Sensory Input Processing
+    [subsection content]
+
 CHAPTER TITLE — FIRST RESPONSE ONLY:
 - In the very first response (the introductory opening paragraphs before any section), \
 always begin with the chapter title on its own line using a single hash:
@@ -234,6 +244,8 @@ HEADINGS
   This applies to all content sections. Only the final 3–4 closing/summary sections of a chapter \
 may have fewer subsections.
 • Do NOT write a section as a flat block of paragraphs — always break content into labelled subsections.
+• After every ## X.Y heading, write 1–2 introductory paragraphs BEFORE the first ### X.Y.1 subsection.
+  Do NOT jump directly from the section heading to the first subsection with no text in between.
 • FIRST RESPONSE ONLY: begin with the chapter title on its own line:
     # Chapter X: Full Chapter Title
   Write the introductory paragraphs immediately after, then end with: "Continue to the next section!"
