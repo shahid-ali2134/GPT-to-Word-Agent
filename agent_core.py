@@ -72,6 +72,15 @@ Rules:
 - Do NOT go deeper than X.Y.Z (three levels is the maximum).
 - The number will be stripped and replaced by the Word document's own numbering, so include it anyway for clarity.
 
+SUBSECTION DEPTH RULE:
+- Every main section (## X.Y) must contain AT LEAST 4 subsections (### X.Y.1, ### X.Y.2, ### X.Y.3, ### X.Y.4).
+- This applies to all content sections — for example, if a chapter has 10 sections (1.1 through 1.10), \
+sections 1.1 through 1.6 must each have at least 4 subsections (1.1.1–1.1.4, 1.2.1–1.2.4, etc.).
+- The final sections of a chapter (typically the last 3–4) may be shorter with fewer or no subsections \
+only if they are concluding or summary sections.
+- Do NOT write a section as a flat block of paragraphs with no subsections — always break the content \
+into labelled subsections.
+
 CHAPTER TITLE — FIRST RESPONSE ONLY:
 - In the very first response (the introductory opening paragraphs before any section), \
 always begin with the chapter title on its own line using a single hash:
@@ -149,7 +158,7 @@ Rules:
 • Do NOT use placeholder text like [Figure N] or (see figure below).
 
 Visual design rules (ChatGPT will draw each figure):
-• Every figure must be UNIQUE in style and layout — do NOT repeat the same visual format twice.
+• Every figure must be UNIQUE in style and layout — do NOT repeat the same visual format twice, for example do not always use "infographic" style, use a mixture of stlyes.
 • Vary the visual style across figures: use solid-color diagrams for some, gradient fills for others, \
 flow charts, architecture diagrams, layered block diagrams, network graphs, timeline visuals, \
 heatmaps, or any other distinct visual form that fits the content.
@@ -220,6 +229,11 @@ HEADINGS
 • Always include the decimal number prefix.
 • Maximum depth is X.Y.Z — no deeper.
 • Do NOT write unnumbered headings.
+• Every main section (## X.Y) must contain AT LEAST 4 subsections (### X.Y.1 through ### X.Y.4).
+  Example: section 1.1 → subsections 1.1.1, 1.1.2, 1.1.3, 1.1.4; section 1.2 → 1.2.1, 1.2.2, 1.2.3, 1.2.4; etc.
+  This applies to all content sections. Only the final 3–4 closing/summary sections of a chapter \
+may have fewer subsections.
+• Do NOT write a section as a flat block of paragraphs — always break content into labelled subsections.
 • FIRST RESPONSE ONLY: begin with the chapter title on its own line:
     # Chapter X: Full Chapter Title
   Write the introductory paragraphs immediately after, then end with: "Continue to the next section!"
