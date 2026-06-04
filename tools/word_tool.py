@@ -140,12 +140,16 @@ _OPENAI_EQ_SYSTEM_PROMPT = (
 
 
 def _openai_clean_equation(text: str) -> "str | None":
-    """Call OpenAI to convert a garbled/Unicode equation to Word UnicodeMath."""
+    """Call OpenAI to convert a garbled/Unicode equation to Word UnicodeMath.
+    Returns None silently when openai is not installed or no API key is set."""
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
         return None
     try:
         import openai  # noqa: PLC0415
+    except ImportError:
+        return None  # openai package not installed — skip silently
+    try:
         client = openai.OpenAI(api_key=api_key)
         resp = client.chat.completions.create(
             model=os.environ.get("OPENAI_EQ_MODEL", "gpt-4o-mini"),
