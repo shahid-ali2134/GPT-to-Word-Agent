@@ -35,7 +35,11 @@ from agent_core import (
 from tools.browser_tool import close_browser
 from tools.stealthwriter_tool import close_stealthwriter_browser
 
-load_dotenv()
+# Always load the .env that sits next to this script, regardless of the
+# directory the bot was launched from.  override=True ensures values from this
+# file win over any stale variables already present in the environment.
+_ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+load_dotenv(_ENV_PATH, override=True)
 
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN", "")
 _raw_guild = os.environ.get("DISCORD_GUILD_ID", "")
