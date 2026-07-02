@@ -476,6 +476,40 @@ def _parse_display_equation(lines: List[str]) -> Block:
     return b
 
 
+def _split_at_figure_boundaries(lines: List[str]) -> List[List[str]]:
+    """
+    Split a line group so a figure placement/caption is never absorbed into
+    surrounding prose.  ChatGPT sometimes writes "Placement: Insert Figure N
+    here." on the line right after a paragraph with no blank line between them;
+    without this split the placement line is treated as body text and the figure
+    is never requested.
+
+    A new sub-group starts at:
+      • a "Placement:" line, OR
+      • a standalone "Fig. N." caption line (one that does NOT immediately
+        follow a placement line — those stay together as one figure group).
+    """
+    result: List[List[str]] = []
+    current: List[str] = []
+    prev_was_placement = False
+
+    for line in lines:
+        s = _strip_inline_markers(line)
+        is_placement = bool(_PLACEMENT_LINE_RE.match(s))
+        is_caption = bool(_FIGURE_LABEL_START_RE.match(s))
+        start_new = (is_placement or (is_caption and not prev_was_placement)) and bool(current)
+        if start_new:
+            result.append(current)
+            current = [line]
+        else:
+            current.append(line)
+        prev_was_placement = is_placement
+
+    if current:
+        result.append(current)
+    return result
+
+
 def parse_markdown(text: str) -> List[Block]:
     """
     Parse a markdown string into blocks.
@@ -487,11 +521,15 @@ def parse_markdown(text: str) -> List[Block]:
     blocks: List[Block] = []
     raw_groups = re.split(r"\n{2,}", text.strip())
 
+    # Peel figure placement/caption lines away from prose stuck to them.
+    line_groups: List[List[str]] = []
     for group in raw_groups:
         lines = [line.rstrip() for line in group.split("\n") if line.strip()]
         if not lines:
             continue
+        line_groups.extend(_split_at_figure_boundaries(lines))
 
+    for lines in line_groups:
         first = lines[0]
         rest = lines[1:]
 

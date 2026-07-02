@@ -9,7 +9,7 @@ import re
 import shutil
 import time
 
-from tools.browser_tool import clear_figure_src_cache, download_last_generated_image, get_last_response, get_message_count, navigate_to_chat, screenshot_figure, send_message
+from tools.browser_tool import clear_figure_src_cache, download_last_generated_image, get_last_response, get_message_count, navigate_to_chat, screenshot_figure, send_message, snapshot_existing_figure_srcs
 from tools.parser import Block, parse_inline, parse_markdown
 from tools.stealthwriter_tool import humanize_text
 from tools.word_tool import append_blocks_to_word, has_pending_blocks, recover_pending_blocks, save_pending_blocks
@@ -584,6 +584,12 @@ def _resolve_single_figure(result, i, fig_num, figures_dir, progress, report):
     # Record how many assistant messages exist RIGHT NOW so that the download
     # functions never confuse a previously generated figure with the new one.
     baseline = get_message_count()
+
+    # Snapshot figures ALREADY on the page (old figures lingering in the canvas
+    # panel) BEFORE requesting the new one, so the new figure — drawn during the
+    # send_message wait below — is never mistaken for a pre-existing one and
+    # excluded from the download scan.
+    snapshot_existing_figure_srcs()
 
     # allow_retry=False: DALL-E generation starts silently (no immediate text
     # response), so a retry would send the same prompt twice and confuse GPT.

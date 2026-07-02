@@ -37,6 +37,46 @@ def clear_figure_src_cache() -> None:
     _downloaded_figure_srcs.clear()
 
 
+def snapshot_existing_figure_srcs() -> int:
+    """Snapshot every large image currently on the page into the exclude set.
+
+    MUST be called BEFORE sending the "Draw figure N" request, so that only
+    figures that already existed (old figures lingering in the canvas panel)
+    are excluded — never the new figure we are about to request.  Calling this
+    after the request would exclude the freshly-drawn figure and cause the
+    download to retry forever.
+
+    Returns the number of images added to the exclude set.
+    """
+    global _page
+    if not _page or _page.is_closed():
+        return 0
+    try:
+        pre_srcs = _page.evaluate("""
+            () => {
+                const MIN = 10000;
+                const out = [];
+                for (const img of document.querySelectorAll('img[src]')) {
+                    const s = img.src || '';
+                    if (!s || s.endsWith('.svg')) continue;
+                    if (!s.startsWith('blob:') && !s.startsWith('https://') &&
+                        !s.startsWith('data:image/')) continue;
+                    if (img.naturalWidth * img.naturalHeight >= MIN)
+                        out.push(s);
+                }
+                return out;
+            }
+        """)
+        if pre_srcs:
+            for s in pre_srcs:
+                _downloaded_figure_srcs.add(s)
+            print(f"  [Browser] Pre-scan: excluded {len(pre_srcs)} existing image(s) before figure request.")
+            return len(pre_srcs)
+    except Exception:
+        pass
+    return 0
+
+
 # ──────────────────────────────────────────────
 # Internals
 # ──────────────────────────────────────────────
@@ -1263,33 +1303,10 @@ def download_last_generated_image(
     import base64 as _b64
     os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
 
-    # ── Pre-scan: snapshot every currently-visible large image src ───────────
-    # Add all large images visible RIGHT NOW (before generation starts) to
-    # _downloaded_figure_srcs so the canvas-panel scan never returns a stale
-    # figure regardless of how the previous figure was downloaded (copy button,
-    # direct URL, download-button click, or Playwright screenshot).
-    try:
-        pre_srcs = _page.evaluate("""
-            () => {
-                const MIN = 10000;
-                const out = [];
-                for (const img of document.querySelectorAll('img[src]')) {
-                    const s = img.src || '';
-                    if (!s || s.endsWith('.svg')) continue;
-                    if (!s.startsWith('blob:') && !s.startsWith('https://') &&
-                        !s.startsWith('data:image/')) continue;
-                    if (img.naturalWidth * img.naturalHeight >= MIN)
-                        out.push(s);
-                }
-                return out;
-            }
-        """)
-        if pre_srcs:
-            for s in pre_srcs:
-                _downloaded_figure_srcs.add(s)
-            print(f"  [Browser] Pre-scan: excluded {len(pre_srcs)} existing image(s) from future canvas scans.")
-    except Exception:
-        pass
+    # NOTE: The pre-scan that snapshots existing figures into the exclude set is
+    # now done by snapshot_existing_figure_srcs() BEFORE the draw request is sent
+    # (see agent_core._resolve_single_figure).  Doing it here — after the request
+    # already completed — would exclude the freshly-drawn figure and retry forever.
 
     # ── Phase 3 helper — element screenshot (works in any ChatGPT mode) ──────
     # Defined early so it can be called both periodically and on timeout.
