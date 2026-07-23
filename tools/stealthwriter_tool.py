@@ -373,6 +373,26 @@ def _extract_result_from_page(page: Page, original_text: str) -> str:
     try:
         candidates: list[str] = page.evaluate(
             """(originalText) => {
+                const orig = (originalText || '').trim();
+                const seen = new Set();
+                const results = [];
+                const NOISE = [
+                    'Humanized Result','Humanize More','Rehumanize','Deep Scan',
+                    'Compare','Copy','Copied','Green = high human impact',
+                    'Click sentences','Detection Score','No score yet','Check for AI',
+                    'Sign In','Pricing','Advanced Settings',
+                ];
+                const isNoise = v => v.length < 20 || NOISE.some(n => v === n)
+                    || v.includes('Sign In') || v.includes('Pricing');
+
+                const push = v => {
+                    v = (v || '').trim();
+                    if (!v || seen.has(v) || v === orig || isNoise(v)) return;
+                    seen.add(v);
+                    results.push(v);
+                };
+
+                // Strategy A: standard result containers.
                 const selectors = [
                     'textarea',
                     '[contenteditable="true"]',
@@ -382,25 +402,32 @@ def _extract_result_from_page(page: Page, original_text: str) -> str:
                     '[class*="output" i]',
                     '[class*="result" i]',
                 ];
-                const seen = new Set();
-                const results = [];
                 for (const sel of selectors) {
                     for (const el of document.querySelectorAll(sel)) {
                         const style = window.getComputedStyle(el);
                         if (style.display === 'none' || style.visibility === 'hidden') continue;
-                        const value = (el.value || el.innerText || el.textContent || '').trim();
-                        if (!value || seen.has(value)) continue;
-                        seen.add(value);
-                        if (
-                            value !== originalText.trim() &&
-                            value.length > 20 &&
-                            !value.includes('Sign In') &&
-                            !value.includes('Pricing')
-                        ) {
-                            results.push(value);
-                        }
+                        push(el.value || el.innerText || el.textContent || '');
                     }
                 }
+
+                // Strategy B: locate the 'Humanized Result' panel and read the
+                // largest text block inside it (the interactive-sentence result).
+                let heading = null;
+                for (const el of document.querySelectorAll('h1,h2,h3,h4,div,span,p,label')) {
+                    if ((el.textContent || '').trim() === 'Humanized Result') { heading = el; break; }
+                }
+                if (heading) {
+                    let panel = heading;
+                    for (let i = 0; i < 5 && panel.parentElement; i++) panel = panel.parentElement;
+                    // Collect the largest descendant text block that is not noise.
+                    let best = '';
+                    for (const el of panel.querySelectorAll('div,p,span')) {
+                        const t = (el.innerText || el.textContent || '').trim();
+                        if (t.length > best.length && !isNoise(t) && t !== orig) best = t;
+                    }
+                    push(best);
+                }
+
                 results.sort((a, b) => b.length - a.length);
                 return results;
             }""",
@@ -438,10 +465,84 @@ def _is_humanizing(page: Page) -> bool:
         return False
 
 
+def _result_panel_ready(page: Page) -> bool:
+    """True once the Humanized Result panel exists AND humanization is finished.
+
+    StealthWriter only renders the 'Humanize More' button after a humanization
+    completes, so its presence is a reliable 'result is ready' signal — much more
+    robust than trying to match the interactive-sentence result container.
+    """
+    if _is_humanizing(page):
+        return False
+    try:
+        return bool(page.evaluate("""
+            () => {
+                for (const b of document.querySelectorAll('button')) {
+                    if (/humanize\\s+more/i.test(b.textContent || '')) return true;
+                }
+                return false;
+            }
+        """))
+    except Exception:
+        return False
+
+
+def _copy_result_via_button(page: Page, original: str) -> str:
+    """Click the result-panel 'Copy' button and return the copied humanized text.
+
+    Uses a clipboard sentinel so we only accept content that the Copy click
+    freshly placed on the clipboard (never stale data).  Saves and restores the
+    user's clipboard around the operation.  Returns '' if nothing valid landed.
+    """
+    try:
+        saved = pyperclip.paste()
+    except Exception:
+        saved = None
+
+    sentinel = "__SW_COPY_SENTINEL__"
+    try:
+        pyperclip.copy(sentinel)
+    except Exception:
+        pass
+
+    clicked = False
+    for get_btn in (
+        lambda: page.get_by_role("button", name=re.compile(r"^\s*cop(y|ied)\s*$", re.I)).first,
+        lambda: page.locator("button").filter(has_text=re.compile(r"^\s*cop(y|ied)\s*$", re.I)).first,
+        lambda: page.locator("button").filter(has_text=re.compile(r"cop(y|ied)", re.I)).first,
+    ):
+        try:
+            get_btn().click(force=True, timeout=2_000)
+            clicked = True
+            break
+        except Exception:
+            pass
+
+    copied = ""
+    if clicked:
+        page.wait_for_timeout(700)
+        try:
+            copied = (pyperclip.paste() or "").strip()
+        except Exception:
+            copied = ""
+
+    # Restore the user's clipboard.
+    if saved is not None:
+        try:
+            pyperclip.copy(saved)
+        except Exception:
+            pass
+
+    if copied and copied != sentinel and copied != original.strip() and len(copied) > 20:
+        return copied
+    return ""
+
+
 def _wait_for_result_and_copy(page: Page, original_text: str, timeout_sec: int, progress=None) -> str:
     _report(progress, "Waiting for StealthWriter to finish humanizing.")
     deadline = time.time() + timeout_sec
     last_progress = time.time()
+    orig = original_text.strip()
 
     while time.time() < deadline:
         # Counter StealthWriter's own scroll-to-result JS.
@@ -450,38 +551,19 @@ def _wait_for_result_and_copy(page: Page, original_text: str, timeout_sec: int, 
         except Exception:
             pass
 
-        # Primary: read result directly from the page DOM — no clipboard involved.
-        result = _extract_result_from_page(page, original_text)
-        if result:
-            return result
-
-        # Fallback: click the Copy button and read via clipboard.
-        copy_button = _find_button(page, r"copy|copied", timeout_ms=1_000)
-        if copy_button:
-            try:
-                _saved_clip = pyperclip.paste()
-            except Exception:
-                _saved_clip = None
-
-            try:
-                try:
-                    copy_button.click(force=True, timeout=2_000)
-                except Exception:
-                    copy_button.click()
-                page.wait_for_timeout(800)
-            except Exception:
-                pass
-
-            copied = _read_clipboard(page)
-
-            if _saved_clip is not None:
-                try:
-                    pyperclip.copy(_saved_clip)
-                except Exception:
-                    pass
-
-            if copied and copied != original_text.strip() and len(copied) > 20:
+        # Only try to extract once the result panel is actually ready (the
+        # 'Humanize More' button has appeared and humanization has stopped).
+        if _result_panel_ready(page):
+            # Primary: the Copy button → clipboard (ground-truth humanized text,
+            # works even when the result renders as interactive sentences).
+            copied = _copy_result_via_button(page, orig)
+            if copied:
                 return copied
+
+            # Secondary: read the result text straight from the DOM.
+            dom_result = _extract_result_from_page(page, original_text)
+            if dom_result:
+                return dom_result
 
         # Report progress every 30 s so the user knows we are still waiting.
         now = time.time()
