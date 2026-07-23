@@ -564,22 +564,24 @@ def _click_main_humanize(page: Page) -> bool:
 
 
 def _try_rehumanize(page: Page, original_text: str, timeout_sec: int, progress=None) -> str | None:
-    """Click the 'Humanize More' button (the separate re-run control) to improve
-    a low-scoring result, and return the new result — or None on failure.
+    """Click ONLY the 'Humanize More' button (in the Humanized Result panel) to
+    improve a low-scoring result, and return the new result — or None on failure.
 
-    NEVER clicks the main 'Humanize' button, which would start a fresh
-    humanization and waste a credit.  Also accepts a 'Rehumanize' label in case
-    the StealthWriter UI uses that wording.
+    Deliberately targets ONLY 'Humanize More'.  It never touches the main
+    'Humanize' button (which starts a fresh humanization and costs a credit) and
+    never falls back to the separate 'Rehumanize' button, per the requirement to
+    use only 'Humanize More' for re-runs.  If 'Humanize More' cannot be found,
+    return None so the current result is kept rather than risk the wrong button.
     """
-    for pattern in (r"humanize\s+more", r"rehumanize"):
-        try:
-            btn = page.get_by_role("button", name=re.compile(pattern, re.I)).first
-            btn.click(force=True, timeout=2_000)
-            page.wait_for_timeout(1_500)
-            return _wait_for_result_and_copy(page, original_text, timeout_sec, progress)
-        except Exception:
-            pass
-    return None
+    try:
+        btn = page.get_by_role(
+            "button", name=re.compile(r"humanize\s+more", re.I)
+        ).first
+        btn.click(force=True, timeout=2_000)
+        page.wait_for_timeout(1_500)
+        return _wait_for_result_and_copy(page, original_text, timeout_sec, progress)
+    except Exception:
+        return None
 
 
 def _humanize_text_sync(
