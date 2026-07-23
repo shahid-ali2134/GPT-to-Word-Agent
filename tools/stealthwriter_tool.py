@@ -366,77 +366,91 @@ def _read_clipboard(page: Page) -> str:
         return ""
 
 
+_WORD_RE = re.compile(r"[a-z]{5,}")
+
+
+def _is_valid_result(text: str, original: str) -> bool:
+    """True when *text* is plausibly the humanized version of *original*.
+
+    The humanized result is a rewording of the original, so it shares most of
+    the original's content words (nouns / technical terms of length >= 5).
+    StealthWriter UI chrome ("Detection Score", "Humanize More", "Looks Human",
+    "words", model names, the green/red legend, etc.) shares almost none — this
+    guard rejects that chrome so it can never be written to the document.
+    """
+    if not text or len(text.strip()) < 40:
+        return False
+
+    orig_words = set(_WORD_RE.findall(original.lower()))
+    cand_words = set(_WORD_RE.findall(text.lower()))
+    if not cand_words:
+        return False
+    if not orig_words:
+        # No content words in the original to compare against — accept on length.
+        return len(text.strip()) >= 40
+
+    overlap = len(orig_words & cand_words)
+    ratio = overlap / len(cand_words)
+    # Must share a substantial number of the original's content words AND not be
+    # dominated by unrelated (UI) vocabulary.
+    return overlap >= 8 and ratio >= 0.15
+
+
 def _extract_result_from_page(page: Page, original_text: str) -> str:
-    # Read candidate text values entirely in JavaScript so no Playwright
-    # locator method (input_value, inner_text, is_visible) can trigger a
-    # focus event or scroll the page.
+    """Return the humanized result text from the page DOM, or '' if not found.
+
+    Collects every substantial text block and scores each by how many of the
+    original's content words it contains.  The humanized result (a rewording of
+    the input) scores highly; UI chrome scores ~0.  Among blocks that share
+    real content with the original, the one with the highest content-word
+    density is returned — this favours the clean result over any wrapper element
+    that also contains surrounding UI text.
+    """
     try:
-        candidates: list[str] = page.evaluate(
+        candidates = page.evaluate(
             """(originalText) => {
                 const orig = (originalText || '').trim();
+                const WORD = /[a-z]{5,}/g;
+                const origWords = new Set((orig.toLowerCase().match(WORD) || []));
+                const norm = s => (s || '').replace(/\\s+/g, ' ').trim();
+
                 const seen = new Set();
-                const results = [];
-                const NOISE = [
-                    'Humanized Result','Humanize More','Rehumanize','Deep Scan',
-                    'Compare','Copy','Copied','Green = high human impact',
-                    'Click sentences','Detection Score','No score yet','Check for AI',
-                    'Sign In','Pricing','Advanced Settings',
-                ];
-                const isNoise = v => v.length < 20 || NOISE.some(n => v === n)
-                    || v.includes('Sign In') || v.includes('Pricing');
-
-                const push = v => {
-                    v = (v || '').trim();
-                    if (!v || seen.has(v) || v === orig || isNoise(v)) return;
-                    seen.add(v);
-                    results.push(v);
-                };
-
-                // Strategy A: standard result containers.
-                const selectors = [
-                    'textarea',
-                    '[contenteditable="true"]',
-                    '[role="textbox"]',
-                    '[data-testid*="output" i]',
-                    '[data-testid*="result" i]',
-                    '[class*="output" i]',
-                    '[class*="result" i]',
-                ];
-                for (const sel of selectors) {
-                    for (const el of document.querySelectorAll(sel)) {
-                        const style = window.getComputedStyle(el);
-                        if (style.display === 'none' || style.visibility === 'hidden') continue;
-                        push(el.value || el.innerText || el.textContent || '');
-                    }
+                const out = [];
+                const sel = 'textarea,[contenteditable="true"],[role="textbox"],' +
+                            'div,p,span,section,article';
+                for (const el of document.querySelectorAll(sel)) {
+                    const st = window.getComputedStyle(el);
+                    if (st.display === 'none' || st.visibility === 'hidden') continue;
+                    const t = norm(el.value || el.innerText || el.textContent || '');
+                    if (t.length < 40 || seen.has(t)) continue;
+                    seen.add(t);
+                    // Skip the input echo — an element still holding the original text.
+                    if (t.toLowerCase() === orig.toLowerCase()) continue;
+                    const words = t.toLowerCase().match(WORD) || [];
+                    if (!words.length) continue;
+                    const uniq = new Set(words);
+                    let hit = 0;
+                    for (const w of uniq) if (origWords.has(w)) hit++;
+                    const ratio = hit / uniq.size;
+                    // Near-identical density (>= 0.92) means an untouched copy of
+                    // the original (the input), not a humanized rewrite — skip it.
+                    if (ratio >= 0.92) continue;
+                    out.push({ text: t, count: hit, ratio: ratio });
                 }
-
-                // Strategy B: locate the 'Humanized Result' panel and read the
-                // largest text block inside it (the interactive-sentence result).
-                let heading = null;
-                for (const el of document.querySelectorAll('h1,h2,h3,h4,div,span,p,label')) {
-                    if ((el.textContent || '').trim() === 'Humanized Result') { heading = el; break; }
-                }
-                if (heading) {
-                    let panel = heading;
-                    for (let i = 0; i < 5 && panel.parentElement; i++) panel = panel.parentElement;
-                    // Collect the largest descendant text block that is not noise.
-                    let best = '';
-                    for (const el of panel.querySelectorAll('div,p,span')) {
-                        const t = (el.innerText || el.textContent || '').trim();
-                        if (t.length > best.length && !isNoise(t) && t !== orig) best = t;
-                    }
-                    push(best);
-                }
-
-                results.sort((a, b) => b.length - a.length);
-                return results;
+                // Highest content-word density first (clean result beats any
+                // wrapper diluted with UI text); tiebreak by absolute overlap.
+                out.sort((a, b) => (b.ratio - a.ratio) || (b.count - a.count));
+                return out.slice(0, 5).map(o => o.text);
             }""",
             original_text,
         )
     except Exception:
         return ""
 
-    return candidates[0] if candidates else ""
+    for cand in candidates or []:
+        if _is_valid_result(cand, original_text):
+            return cand
+    return ""
 
 
 def _is_humanizing(page: Page) -> bool:
@@ -533,7 +547,12 @@ def _copy_result_via_button(page: Page, original: str) -> str:
         except Exception:
             pass
 
-    if copied and copied != sentinel and copied != original.strip() and len(copied) > 20:
+    if (
+        copied
+        and copied != sentinel
+        and copied != original.strip()
+        and _is_valid_result(copied, original)
+    ):
         return copied
     return ""
 
