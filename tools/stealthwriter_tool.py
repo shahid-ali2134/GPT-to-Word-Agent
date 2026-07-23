@@ -533,13 +533,47 @@ def _extract_human_score(page: Page) -> int | None:
         return None
 
 
-def _try_rehumanize(page: Page, original_text: str, timeout_sec: int, progress=None) -> str | None:
-    """Click Rehumanize (or Humanize again) and return the new result, or None on failure."""
-    for pattern in (r"rehumanize", r"^humanize$"):
+def _click_main_humanize(page: Page) -> bool:
+    """Click the MAIN 'Humanize' button EXACTLY once.
+
+    Matches only a button whose text is exactly 'Humanize' — never 'Humanize
+    More' (the separate re-run button) — so the initial humanization consumes
+    exactly one credit.  Returns True if a click was dispatched.
+    """
+    # Exact-name candidates first (accessible name == "Humanize", excludes
+    # "Humanize More"), then an exact-text locator, then keyboard activation.
+    candidates = [
+        lambda: page.get_by_role("button", name=re.compile(r"^\s*humanize\s*$", re.I)).first,
+        lambda: page.locator("button").filter(
+            has_text=re.compile(r"^\s*humanize\s*$", re.I)).first,
+    ]
+    for get_btn in candidates:
         try:
-            btn = page.locator("button").filter(
-                has_text=re.compile(pattern, re.I)
-            ).first
+            get_btn().click(force=True, timeout=2_000)
+            return True
+        except Exception:
+            pass
+    # Keyboard fallback on the exact-name button
+    try:
+        btn = page.get_by_role("button", name=re.compile(r"^\s*humanize\s*$", re.I)).first
+        btn.focus(timeout=1_000)
+        page.keyboard.press("Enter")
+        return True
+    except Exception:
+        return False
+
+
+def _try_rehumanize(page: Page, original_text: str, timeout_sec: int, progress=None) -> str | None:
+    """Click the 'Humanize More' button (the separate re-run control) to improve
+    a low-scoring result, and return the new result — or None on failure.
+
+    NEVER clicks the main 'Humanize' button, which would start a fresh
+    humanization and waste a credit.  Also accepts a 'Rehumanize' label in case
+    the StealthWriter UI uses that wording.
+    """
+    for pattern in (r"humanize\s+more", r"rehumanize"):
+        try:
+            btn = page.get_by_role("button", name=re.compile(pattern, re.I)).first
             btn.click(force=True, timeout=2_000)
             page.wait_for_timeout(1_500)
             return _wait_for_result_and_copy(page, original_text, timeout_sec, progress)
@@ -585,69 +619,20 @@ def _humanize_text_sync(
 
     _report(progress, "Starting StealthWriter humanization.")
 
-    # Baseline result text BEFORE clicking so we can detect a new result and
-    # never re-click once humanization has produced output.
-    baseline_result = _extract_result_from_page(page, text)
-
-    def _click_humanize_once() -> bool:
-        """Dispatch exactly ONE click to the Humanize button (first method that
-        does not raise).  Returns True if a click was dispatched.  Critically,
-        this never clicks more than once per call so humanization credits are
-        not wasted."""
-        selectors = [
-            lambda: page.locator("button").filter(
-                has_text=re.compile(r"^humanize$", re.I)).first,
-            lambda: page.locator("button").filter(
-                has_text=re.compile(r"humanize", re.I)).first,
-            lambda: page.get_by_role("button", name=re.compile(r"humanize", re.I)).first,
-        ]
-        for get_btn in selectors:
-            try:
-                get_btn().click(force=True, timeout=2_000)
-                return True
-            except Exception:
-                pass
-        # Keyboard fallback on the first matching button
-        try:
-            btn = selectors[0]()
-            btn.focus(timeout=1_000)
-            page.keyboard.press("Enter")
-            return True
-        except Exception:
-            return False
-
-    def _activity_detected() -> bool:
-        """True when humanization has started (spinner / disabled button) OR a
-        new result has appeared — either means we must NOT click again."""
+    # CRITICAL: press the main "Humanize" button EXACTLY ONCE.  Every press
+    # consumes a humanization credit, so this is never retried.  If the click
+    # somehow does not register we still proceed to wait for the result rather
+    # than clicking again.  Re-runs to improve the score use the separate
+    # "Humanize More" button (see _try_rehumanize), never this one.
+    if _click_main_humanize(page):
+        # Brief confirmation wait — for LOGGING only, never to decide a re-click.
+        page.wait_for_timeout(1_500)
         if _is_humanizing(page):
-            return True
-        current = _extract_result_from_page(page, text)
-        return bool(current and current != baseline_result)
-
-    humanize_started = False
-    for _attempt in range(3):
-        # If activity is already happening (e.g. a previous click registered),
-        # do NOT click again — just proceed to wait for the result.
-        if _activity_detected():
-            humanize_started = True
-            break
-
-        _click_humanize_once()
-
-        # Poll up to 8 s for ANY sign the click registered, then stop clicking.
-        poll_deadline = time.time() + 8
-        while time.time() < poll_deadline:
-            if _activity_detected():
-                humanize_started = True
-                break
-            page.wait_for_timeout(500)
-        if humanize_started:
-            break
-
-        _report(progress, f"Humanize click not registering — retrying (attempt {_attempt + 1}/3)…")
-
-    if not humanize_started:
-        _report(progress, "Warning: could not confirm humanization started — proceeding to wait for result.")
+            _report(progress, "Humanization started.")
+        else:
+            _report(progress, "Humanize clicked — waiting for result.")
+    else:
+        _report(progress, "Warning: could not find the Humanize button — waiting for result anyway.")
 
     result = _wait_for_result_and_copy(page, text, timeout_sec, progress)
     accepted = False
@@ -664,13 +649,13 @@ def _humanize_text_sync(
         _report(
             progress,
             f"Human score {score}% is below {threshold}%. "
-            f"Rehumanizing (attempt {attempt + 1}/{max_rehumanize}).",
+            f"Clicking 'Humanize More' (attempt {attempt + 1}/{max_rehumanize}).",
         )
         new_result = _try_rehumanize(page, text, timeout_sec, progress)
         if new_result:
             result = new_result
         else:
-            _report(progress, "Rehumanize button not found. Checking final score.")
+            _report(progress, "'Humanize More' button not found. Checking final score.")
             break
 
     if not accepted:
