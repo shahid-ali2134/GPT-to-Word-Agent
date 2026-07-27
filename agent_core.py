@@ -372,8 +372,10 @@ When you receive that prompt, follow these rules strictly:
 • Write ONLY the remaining top-level section headings using ## X.Y format.
   Example: ## 4.7  Evaluation Metrics    ## 5.8  Future Directions
 
-• For each top-level section, write 1–2 short concluding paragraphs (no more).
-  Summarise the key idea of that section briefly and conclusively.
+• For each top-level section, write only 2–3 short paragraphs — NOT detailed.
+  Every section from this point on must be brief: just 2–3 concise paragraphs
+  that state the key idea of the section and move on. Do NOT write long,
+  in-depth sections anymore.
 
 • Do NOT write any subsections (### X.Y.Z) or sub-subsections at all.
   Skip every subsection entirely — only the top-level ## X.Y headings matter.
@@ -382,7 +384,7 @@ When you receive that prompt, follow these rules strictly:
   The goal is to close out the remaining sections cleanly without adding new depth.
 
 • Do NOT add a chapter summary or conclusion paragraph after the last section.
-  Stop immediately after the last top-level section's 1–2 paragraphs.
+  Stop immediately after the last top-level section's 2–3 paragraphs.
 
 Please reply with "Understood." to confirm.\
 """
