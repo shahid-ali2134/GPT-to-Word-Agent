@@ -229,11 +229,14 @@ Please reply with "Understood." to confirm.\
 """
 
 _INSTRUCT_SUMMARY = """\
-From now on, the LAST section of every chapter must be a Chapter Summary:
+From now on, every chapter ends with a Chapter Summary as section X.8:
 
-• Write the final section as a dedicated summary section with the heading:
-    ## X.Y  Chapter Summary
-  where X is the chapter number and Y is the next section number in sequence.
+• A chapter has a MAXIMUM of 8 sections: X.1 through X.8 — never go past X.8.
+• Section X.8 must ALWAYS be the Chapter Summary.
+  Example: Chapter 8 → last section is 8.8 Chapter Summary; Chapter 3 → 3.8 Chapter Summary.
+• Sections X.1 through X.7 are the normal content sections; X.8 is the summary.
+• Write the summary heading exactly as:
+    ## X.8  Chapter Summary
 • The summary must briefly recap the core ideas covered in the chapter — \
 one short paragraph per major topic area is sufficient.
 • Do NOT introduce any new concepts, equations, figures, or tables in the summary.
@@ -338,7 +341,11 @@ NO REPETITION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 CHAPTER SUMMARY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• The LAST section of every chapter must be a Chapter Summary (## X.Y  Chapter Summary).
+• A chapter has a MAXIMUM of 8 sections: X.1 through X.8 (never go past X.8).
+• Section X.8 must ALWAYS be the Chapter Summary — e.g. for Chapter 8 the last
+  section is 8.8 Chapter Summary; for Chapter 3 it is 3.8 Chapter Summary.
+• So sections X.1–X.7 are normal content sections and X.8 is the summary.
+• Write the summary heading exactly as: ## X.8  Chapter Summary
 • Recap the core ideas covered — one short paragraph per major topic area.
 • No new concepts, equations, figures, or tables in the summary.
 • No subsections inside the Chapter Summary.
