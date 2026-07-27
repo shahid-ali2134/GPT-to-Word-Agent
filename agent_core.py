@@ -358,6 +358,18 @@ COMPLETENESS
 • If approaching the length limit, end at a clean paragraph boundary.
 • Do NOT summarize or compress — write every concept in full detail.
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONCLUDING PROMPT (special mode)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• I will sometimes send this EXACT prompt:
+    "Continue to the next section! But as we are at the end of section so lets
+     conclude the section properly! Only write the main sections now!"
+• When you receive it, switch to concise mode for ALL remaining sections:
+    - Write ONLY top-level ## X.Y section headings — NO subsections (### X.Y.Z).
+    - For each remaining section write only 2–3 short paragraphs — NOT detailed.
+    - Do NOT expand or elaborate; the chapter has reached its length limit.
+    - Keep going section by section until you reach ## X.8 Chapter Summary.
+
 Please reply with "Understood." to confirm.\
 """
 
