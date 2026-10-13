@@ -364,9 +364,17 @@ _STRIPPED_LATEX_MAP = [
 
 
 def _normalize_stripped_latex(latex: str) -> str:
-    """Reconstruct backslashes stripped by ChatGPT's markdown renderer."""
+    """Reconstruct backslashes stripped by ChatGPT's markdown renderer.
+
+    A match already preceded by a backslash is valid LaTeX and is left alone;
+    otherwise "\\leq" would become "\\\\leq" (a line break followed by "leq").
+    """
     for pattern, replacement in _STRIPPED_LATEX_MAP:
-        latex = pattern.sub(replacement, latex)
+        def repl(m, s=latex, r=replacement):
+            if m.start() > 0 and s[m.start() - 1] == "\\":
+                return m.group(0)
+            return m.expand(r)
+        latex = pattern.sub(repl, latex)
     return latex
 
 

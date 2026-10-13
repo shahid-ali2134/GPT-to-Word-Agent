@@ -1,0 +1,14 @@
+{
+  "enabledMcpjsonServers": [
+    "book-agent"
+  ],
+  "env": {
+    "MCP_TOOL_TIMEOUT": "3600000",
+    "MAX_MCP_OUTPUT_TOKENS": "60000"
+  },
+  "permissions": {
+    "allow": [
+      "mcp__book-agent"
+    ]
+  }
+}

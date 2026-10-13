@@ -1,6 +1,15 @@
 # GPT-to-Word Agent
 
-A Python automation tool that writes long-form book content with ChatGPT, humanizes body prose through StealthWriter, and appends the formatted result to a Word document — fully automated and controlled from Discord.
+A Python automation tool that writes long-form book content with ChatGPT, humanizes body prose through StealthWriter, and appends the formatted result to a Word document.
+
+There are two ways to run it:
+
+| Mode | Who decides what happens next | Best for |
+|------|-------------------------------|----------|
+| **Claude Code + MCP** (recommended) | Claude, as an intelligent orchestrator, using the MCP tools in `mcp_server.py` | Whole books, hands-off, with every equation/table/figure verified before it reaches Word. See [Claude Code Orchestration (MCP)](#claude-code-orchestration-mcp). |
+| **Discord bot** | Hard-coded workflow in `agent_core.py` | Running individual commands remotely from Discord. See [Discord Commands](#discord-commands). |
+
+Both modes share the same browser automation, StealthWriter integration, Word styling and formatting rules (`/instruct` presets).
 
 ---
 
@@ -19,19 +28,174 @@ A Python automation tool that writes long-form book content with ChatGPT, humani
 
 ```
 GPT-to-Word-Agent/
-├── agent_core.py             # Core workflow logic
+├── agent_core.py             # Discord workflow logic + the /instruct rules and chapter prompts
 ├── discord_bot.py            # Discord slash-command front end
 ├── discord_bridge.py         # Message routing between Discord and agent threads
+├── mcp_server.py             # MCP server: tools Claude Code uses to run the book workflow
+├── .mcp.json                 # Registers mcp_server.py with Claude Code (server name: book-agent)
 ├── config.json               # Projects, styles, browser, and StealthWriter settings
 ├── config.example.json       # Template — copy to config.json and fill in your values
 ├── requirements.txt
+├── .claude/
+│   ├── settings.json         # Enables book-agent, tool timeouts, permissions
+│   ├── skills/write-book/SKILL.md   # Orchestrator playbook (the workflow, in plain English)
+│   └── agents/
+│       ├── section-writer.md # Subagent: one ChatGPT response → verified blocks file
+│       └── section-auditor.md# Subagent: independent quality gate before Word
+├── projects/
+│   └── book/
+│       ├── brief.md          # Per-book settings and decisions (edit this, not code)
+│       ├── ledger.json       # Progress: chapters, units, figures (created at runtime)
+│       ├── work/             # Saved ChatGPT replies + blocks JSON per unit (runtime)
+│       ├── figures/          # Downloaded figure images (runtime)
+│       ├── backups/          # .docx backup before every write (runtime)
+│       └── logs/run.log      # Tool activity log (runtime)
 └── tools/
     ├── browser_tool.py       # Playwright automation for ChatGPT
     ├── stealthwriter_tool.py # Playwright automation for StealthWriter
-    ├── parser.py             # Markdown → typed Block parser
+    ├── parser.py             # Markdown → typed Block parser (Discord mode)
     ├── word_tool.py          # python-docx formatter + Word COM field updater
+    ├── blocks.py             # MCP mode: markdown → editable JSON blocks + validation
+    ├── docx_writer.py        # MCP mode: blocks → Word, read-back, backups
     └── __init__.py
 ```
+
+---
+
+## Claude Code Orchestration (MCP)
+
+Instead of a fixed script, **Claude Code is the orchestrator**. It reads your chapter outline files, drives ChatGPT with your own rules and prompts, checks every response, and writes to Word only when everything passes. It decides what to do when ChatGPT truncates, skips, repeats or misnumbers something, so you don't have to patch code for each new book.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Claude Code (terminal) — orchestrator                       │
+│   skill: write-book        brief: projects/<p>/brief.md     │
+│   ledger: projects/<p>/ledger.json (progress / resume)      │
+│   ├─ section-writer  subagent (one ChatGPT response)        │
+│   └─ section-auditor subagent (independent review)          │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ MCP tool calls (stdio)
+┌──────────────────────────▼──────────────────────────────────┐
+│ mcp_server.py  "book-agent" — small deterministic tools     │
+│   ChatGPT · StealthWriter · blocks/validation · Word        │
+│   (wraps tools/*.py; one long-lived browser session)        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Setup (one time)
+
+1. Install dependencies (adds `mcp` and `Pillow`):
+   ```powershell
+   pip install -r requirements.txt
+   playwright install chromium
+   ```
+2. Make sure `config.json` has the project (`chat_url`, `word_file_path`, `browser`), see [Setup](#setup).
+3. Log in once to ChatGPT and StealthWriter (see [First run](#4-first-run--log-in)); the session in `browser_state.json` is reused.
+4. Install [Claude Code](https://docs.claude.com/en/docs/claude-code) and start it **in this folder**:
+   ```powershell
+   cd "path\to\GPT-to-Word-Agent"
+   claude
+   ```
+5. Approve the `book-agent` MCP server when prompted (it's declared in `.mcp.json` and enabled by `.claude/settings.json`). Check it with `/mcp`; it should show **book-agent · connected** with 14 tools.
+
+To register the server manually instead (e.g. from another folder):
+```powershell
+claude mcp add book-agent -- python "C:\path\to\GPT-to-Word-Agent\mcp_server.py"
+```
+
+### Per-book setup
+
+1. Put the chapter outline files in a folder: `1.txt`, `2.txt`, … (first line = chapter title, then the section list).
+2. Edit `projects/<project>/brief.md`: outline folder, target length, numbering policy, quality bar, any book-specific decisions. **This file replaces code tweaks.** For a new book, copy `projects/book/` to `projects/<new>/` and add a matching entry in `config.json`.
+3. Use a **single ChatGPT chat for the whole book** (`chat_url`). Context across chapters prevents repeated content, figures and equations. Slow replies in a long chat are expected and handled.
+
+### Running
+
+Just talk to Claude in the terminal:
+
+| You say | What happens |
+|---------|--------------|
+| `write chapter 1` | Writes chapter 1 end to end |
+| `write chapters 2-15` | Writes them in order without stopping |
+| `continue` | Resumes from the ledger: first unfinished chapter/unit |
+| `redo chapter 4 from unit r05` | Restores the backup taken before r05 and rewrites from there |
+| `status` | Ledger + document summary (figures/tables/equations so far) |
+
+You can also invoke the skill explicitly: `/write-book continue`.
+
+Per chapter, Claude follows exactly the `/writecompletechapter` sequence, with your prompts verbatim:
+
+1. Sends your `/instruct all` rules once per chat (read live from `agent_core.py`, so editing them there updates both modes).
+2. Outline prompt with the chapter file's text → intro prompt → `continue to the next section!` …
+3. After a complete response containing section X.6+, sends the conclude prompt once (remaining sections concise) → stops at the X.8 Chapter Summary.
+
+Each ChatGPT response becomes one **unit** (`r01`, `r02`, …):
+
+1. **section-writer** sends the prompt, completes truncated replies, converts the reply into `work/chNN/<unit>.blocks.json`, checks it against your rules, reviews facts/math/tables, draws each figure and *looks at the image* (redraws up to 3× if it doesn't match the caption or has misspelled labels), humanizes body text, proofreads the humanized text against the original, and validates.
+2. **section-auditor** reviews the blocks file with fresh eyes; fixes small issues, or fails it back to the writer.
+3. **docx_append** validates again, checks numbering against Word, backs up the `.docx`, writes, verifies Word's counts, and marks the unit written in the ledger.
+
+Claude only stops to ask you when: a login is needed or StealthWriter quota is exhausted, the Word file is open/locked, a figure is still wrong after 3 redraws, a numbering gap's cause can't be found, or a unit fails audit twice.
+
+### Quality gates (enforced in code, not just instructions)
+
+| Check | Where | Effect |
+|-------|-------|--------|
+| Display + inline equations convert to real Word equations | `validate_blocks` | blocks write |
+| Balanced braces, `\left`/`\right`, `\begin`/`\end` | `validate_blocks` | blocks write |
+| No equation numbers / no "Equation (N)" references | `validate_blocks` | blocks write |
+| Tables rectangular, header row, caption, table number | `validate_blocks` | blocks write |
+| Figures have number, caption, readable image file | `validate_blocks` | blocks write |
+| Figure/table numbers continue exactly from Word's caption count; no references to non-existent figures/tables | `docx_append` | blocks write |
+| Word caption counts rose by exactly the expected amount | `docx_append` | reported |
+| No ChatGPT chatter, placeholders, leftover markdown, unbalanced `$` | `validate_blocks` | blocks write |
+| Same unit can't be written twice | `docx_append` (ledger) | blocks write |
+| Repeated words, space before punctuation, truncated paragraph, Unicode math in prose | `validate_blocks` | warning for Claude |
+| Inline math survives humanization (swapped for `KEEPTOKEN`s and restored) | `humanize_blocks` | paragraph kept original if lost |
+
+**Numbering policy:** Word numbers figure and table captions itself, continuously through the book. The number in the text must equal Word's number; a mismatch means something was dropped or duplicated, and the write is refused until the cause is found. Equations are not numbered (a dropped equation would leave an unexplained gap).
+
+### MCP tools reference
+
+| Tool | Purpose |
+|------|---------|
+| `project_status` | Project settings, ledger, document summary (next figure/table numbers). Called first each session. |
+| `ledger_update` | Record chapter/unit status, plan, issues. |
+| `chatgpt_open` | Open the book's chat (waits for login). |
+| `chatgpt_send` | Send a prompt, wait until the reply has stopped changing, save it as markdown. |
+| `chatgpt_read_last` | Read the latest reply without sending (recovery). |
+| `chatgpt_rules` | The `/instruct` presets and chapter prompts, live from `agent_core.py`; optionally send verbatim. |
+| `chatgpt_draw_figure` | "Draw figure N please!" + download; returns path, size, duplicate check. |
+| `markdown_to_blocks` | Saved reply → editable blocks JSON + validation report. |
+| `validate_blocks` | All checks above + Word's next figure/table numbers. |
+| `humanize_blocks` | One StealthWriter pass over body paragraphs, math-safe; keeps originals for proofreading. |
+| `stealthwriter_open` | Open StealthWriter for login after logout / quota reset. |
+| `docx_append` | Validate → numbering check → backup → write → verify → ledger. |
+| `docx_inspect` | Read back the document: counts, headings, last paragraphs. |
+| `docx_restore` | Undo: restore a backup (the current file is backed up first). |
+
+**Blocks format** (`work/chNN/<unit>.blocks.json`), which Claude edits directly:
+
+```json
+[
+  {"type": "heading2", "num": "2.3", "text": "Data Sources"},
+  {"type": "body", "text": "The rate is $\\lambda \\geq 0$ with **bold** and *italic*."},
+  {"type": "equation", "latex": "\\Pr(N=k) = \\frac{\\lambda^k e^{-\\lambda}}{k!}"},
+  {"type": "table", "number": 5, "caption": "Source types.", "rows": [["Type", "Example"], ["API", "REST"]]},
+  {"type": "figure", "number": 12, "gpt_number": 13, "caption": "Sources feeding a lakehouse.", "image": "projects/book/figures/fig_012_v1.png"}
+]
+```
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `/mcp` doesn't list book-agent | Start `claude` from this folder; approve the server; check `python mcp_server.py` starts without import errors (`pip install -r requirements.txt`). |
+| Tool call times out on a very slow chat | `.claude/settings.json` sets `MCP_TOOL_TIMEOUT` to 60 min; raise it if needed. Claude will check `chatgpt_read_last` before resending anything. |
+| "is open in Word or locked" | Close the `.docx` in Word, then say `continue`. |
+| StealthWriter quota / logged out | Say "open StealthWriter", log in, then `continue`. |
+| Something wrong already in Word | Say "restore the backup before unit rNN and redo from there" (`docx_restore`). |
+| Don't run the Discord bot and Claude Code at the same time | Both drive the same browser session and Word file. |
 
 ---
 
@@ -351,3 +515,5 @@ Controls Word document page size and margins (all values in cm).
 | `browser_profiles/` | Persistent browser profile data |
 | `__pycache__/` | Python bytecode |
 | `*.docx` | Generated Word documents |
+| `projects/*/work/`, `figures/`, `backups/`, `logs/`, `ledger.json` | Book content and runtime state from MCP mode |
+| `.claude/settings.local.json` | Personal Claude Code permissions |

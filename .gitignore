@@ -2,7 +2,11 @@
 config.json
 browser_state.json
 browser_profiles/
-.claude/
+# Claude Code: share the workflow (skills, agents, settings), keep personal files local
+.claude/*
+!.claude/settings.json
+!.claude/skills/
+!.claude/agents/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -14,3 +18,10 @@ env/
 *.docx
 *.tmp
 *.log
+
+# Claude workflow runtime data (book content, figures, backups)
+projects/*/work/
+projects/*/figures/
+projects/*/backups/
+projects/*/logs/
+projects/*/ledger.json
