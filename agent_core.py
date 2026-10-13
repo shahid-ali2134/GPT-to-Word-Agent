@@ -11,7 +11,7 @@ import time
 
 from tools.browser_tool import clear_figure_src_cache, download_last_generated_image, get_last_response, get_message_count, navigate_to_chat, screenshot_figure, send_message, snapshot_existing_figure_srcs
 from tools.parser import Block, parse_inline, parse_markdown
-from tools.stealthwriter_tool import humanize_text
+from tools.stealthwriter_tool import humanize_text, open_stealthwriter_for_login
 from tools.word_tool import append_blocks_to_word, has_pending_blocks, recover_pending_blocks, save_pending_blocks
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -451,7 +451,11 @@ def send_formatting_instruction(
 
     if progress:
         progress(f"Sending '{topic}' formatting instruction to ChatGPT.")
-    send_message(instruction, progress=progress)
+    send_result = send_message(instruction, progress=progress)
+    if send_result.lower().startswith("error"):
+        raise RuntimeError(send_result)
+    if send_result.lower().startswith("warning") and progress:
+        progress(send_result)
     reply = get_last_response()
 
     return {
@@ -1544,3 +1548,81 @@ def humanize_with_stealthwriter(
         mode_name=mode_name,
         progress=progress,
     )
+
+
+# ── Recovery commands ─────────────────────────────────────────────────────────
+# These let the user recover WITHOUT restarting a full chapter when StealthWriter
+# runs out of humanizations or gets logged out mid-run.  They never modify the
+# normal chapter-writing flow — they are standalone entry points.
+
+def open_stealthwriter_login(project_name: str = DEFAULT_PROJECT, progress=None) -> dict:
+    """Open the StealthWriter humanizer page so the user can log back in.
+
+    Use after the humanization quota resets or the StealthWriter session is
+    logged out, so the tab is ready before running /writelastresponse.
+    """
+    project = get_project(project_name)
+    if progress:
+        progress("Opening StealthWriter — please log in if prompted.")
+    message = open_stealthwriter_for_login(project.get("browser", "chrome"), progress=progress)
+    return {"project": project_name, "message": message}
+
+
+def open_chatgpt_chat(project_name: str = DEFAULT_PROJECT, progress=None) -> dict:
+    """Open (and load) the project's ChatGPT chat so the user can log in / check it."""
+    project = get_project(project_name)
+    if progress:
+        progress(f"Opening ChatGPT chat for project '{project_name}'.")
+    result = navigate_to_chat(
+        project["chat_url"],
+        project.get("browser", "chrome"),
+        progress=progress,
+    )
+    if result.lower().startswith(("warning", "error")):
+        raise RuntimeError(result)
+    return {"project": project_name, "message": result}
+
+
+def write_last_response(project_name: str = DEFAULT_PROJECT, progress=None) -> dict:
+    """Take the LAST response already in the ChatGPT chat through the normal flow.
+
+    Reads the most recent ChatGPT response (no new prompt is sent), humanizes the
+    body via StealthWriter, resolves any figures, and appends it to the Word
+    document.  This is the recovery path for when a chapter run failed at the
+    humanization step (quota reached / logged out) but ChatGPT had ALREADY
+    produced the response — so the response is not lost and the flow continues.
+    """
+    project = get_project(project_name)
+    word_file_path = project["word_file_path"]
+    report = progress or (lambda _m: None)
+
+    # Fresh figure state for this standalone recovery pass.
+    clear_figure_src_cache()
+    _clear_chapter_resolved_figs()
+
+    report(f"Opening ChatGPT chat for project '{project_name}'.")
+    nav = navigate_to_chat(
+        project["chat_url"],
+        project.get("browser", "chrome"),
+        progress=progress,
+    )
+    if nav.lower().startswith(("warning", "error")):
+        raise RuntimeError(nav)
+
+    report("Reading the last response from ChatGPT.")
+    response = _fetch_complete(_strip_gpt_preamble(get_last_response()), report)
+    if not response or not response.strip():
+        raise RuntimeError("No response found in the ChatGPT chat to process.")
+
+    report("Humanizing the last response and writing it to Word.")
+    blocks_for_word = _humanize_for_word(response, project, report)
+    blocks_for_word = _demote_chapter_to_heading2(blocks_for_word)
+    blocks_for_word = _resolve_figures(blocks_for_word, word_file_path, report)
+    append_result = _append_with_retry(blocks_for_word, word_file_path, report)
+    report(append_result)
+
+    return {
+        "project": project_name,
+        "word_file_path": word_file_path,
+        "response_preview": response[:400],
+    }

@@ -479,6 +479,25 @@ def _is_humanizing(page: Page) -> bool:
         return False
 
 
+def _read_humanizations_left(page: Page) -> "int | None":
+    """Return the 'X/150 humanizations left' count shown on the page, or None.
+
+    This counter drops by one the instant a humanization actually starts, so it
+    is the most reliable proof that a Humanize click registered and consumed a
+    credit — used to retry the click ONLY when no credit was spent.
+    """
+    try:
+        return page.evaluate("""
+            () => {
+                const t = document.body.innerText || '';
+                const m = t.match(/(\\d+)\\s*\\/\\s*\\d+\\s+humanizations?\\s+left/i);
+                return m ? parseInt(m[1], 10) : null;
+            }
+        """)
+    except Exception:
+        return None
+
+
 def _result_panel_ready(page: Page) -> bool:
     """True once the Humanized Result panel exists AND humanization is finished.
 
@@ -722,20 +741,54 @@ def _humanize_text_sync(
 
     _report(progress, "Starting StealthWriter humanization.")
 
-    # CRITICAL: press the main "Humanize" button EXACTLY ONCE.  Every press
-    # consumes a humanization credit, so this is never retried.  If the click
-    # somehow does not register we still proceed to wait for the result rather
-    # than clicking again.  Re-runs to improve the score use the separate
-    # "Humanize More" button (see _try_rehumanize), never this one.
-    if _click_main_humanize(page):
-        # Brief confirmation wait — for LOGGING only, never to decide a re-click.
-        page.wait_for_timeout(1_500)
-        if _is_humanizing(page):
-            _report(progress, "Humanization started.")
-        else:
-            _report(progress, "Humanize clicked — waiting for result.")
+    # Press the main "Humanize" button.  A press only counts (consumes a credit)
+    # when humanization actually STARTS, which the "X/150 humanizations left"
+    # counter reflects immediately.  We therefore retry the click ONLY while we
+    # can PROVE no credit was consumed (counter readable and unchanged) — so the
+    # button reliably gets pressed without ever double-charging.
+    credits_before = _read_humanizations_left(page)
+
+    def _humanization_started() -> bool:
+        if credits_before is not None:
+            now = _read_humanizations_left(page)
+            if now is not None and now < credits_before:
+                return True
+        return _is_humanizing(page) or _result_panel_ready(page)
+
+    # If the counter is unreadable we cannot verify a credit was NOT spent, so we
+    # click only once to avoid any risk of double-charging.  When it is readable,
+    # allow a few safe retries.
+    max_click_attempts = 4 if credits_before is not None else 1
+    started = False
+
+    for attempt in range(max_click_attempts):
+        clicked = _click_main_humanize(page)
+        if not clicked and attempt == 0:
+            _report(progress, "Warning: Humanize button not found — retrying…")
+
+        # Poll up to 7 s for proof the click registered.
+        poll_deadline = time.time() + 7
+        while time.time() < poll_deadline:
+            page.wait_for_timeout(500)
+            if _humanization_started():
+                started = True
+                break
+        if started:
+            break
+
+        # Not started.  Retry ONLY if the counter proves no credit was consumed.
+        if credits_before is None:
+            break
+        now = _read_humanizations_left(page)
+        if now is not None and now < credits_before:
+            started = True
+            break
+        _report(progress, f"Humanize click didn't register — retrying ({attempt + 1}/{max_click_attempts}).")
+
+    if started:
+        _report(progress, "Humanization started.")
     else:
-        _report(progress, "Warning: could not find the Humanize button — waiting for result anyway.")
+        _report(progress, "Proceeding to wait for the humanized result…")
 
     result = _wait_for_result_and_copy(page, text, timeout_sec, progress)
     accepted = False
@@ -786,6 +839,18 @@ def humanize_text(
     Humanize text through StealthWriter in a tab beside the ChatGPT tab.
     """
     return _humanize_text_sync(text, browser_name, mode_name, progress)
+
+
+def open_stealthwriter_for_login(browser_name: str = "chrome", progress=None) -> str:
+    """Open the StealthWriter humanizer page and wait for the user to log in.
+
+    Used by the /openstealthwriter recovery command so the user can log back in
+    (e.g. after the humanization quota reset) without running a full chapter.
+    """
+    page = _ensure_browser(browser_name)
+    _navigate_to_humanizer(page, progress)
+    _report(progress, "StealthWriter humanizer page is open and ready.")
+    return "StealthWriter humanizer page is open. Log in if prompted, then you can retry writing."
 
 
 def close_stealthwriter_browser():

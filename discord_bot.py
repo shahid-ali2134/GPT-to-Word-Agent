@@ -26,10 +26,13 @@ from agent_core import (
     configure_figure_interrupt_fn,
     finish_chapter,
     humanize_with_stealthwriter,
+    open_chatgpt_chat,
+    open_stealthwriter_login,
     recover_pending,
     send_formatting_instruction,
     write_complete_chapter,
     write_complete_chapter_v2,
+    write_last_response,
     write_sections,
 )
 from tools.browser_tool import close_browser
@@ -112,6 +115,10 @@ def _make_progress_sender(interaction: discord.Interaction, loop: asyncio.Abstra
         "Humanizing",
         "Saving",
         "Waiting",
+        "Still waiting",
+        "Chat history",
+        "Chat loaded",
+        "Sending",
         "OK:",
         "Warning:",
         "Error:",
@@ -420,6 +427,93 @@ async def recover_command(
     await _send_followup(
         interaction,
         f"{result['message']}\nDocument: {result['word_file_path']}",
+    )
+
+
+@bot.tree.command(
+    name="openstealthwriter",
+    description="Open StealthWriter so you can log in (e.g. after the quota resets).",
+)
+@app_commands.describe(project="Project key from config.json")
+async def open_stealthwriter_command(
+    interaction: discord.Interaction,
+    project: str = DEFAULT_PROJECT,
+):
+    await interaction.response.defer(thinking=True)
+    loop = asyncio.get_running_loop()
+    progress = _make_progress_sender(interaction, loop)
+
+    try:
+        result = await loop.run_in_executor(
+            executor,
+            lambda: open_stealthwriter_login(project_name=project, progress=progress),
+        )
+    except Exception as exc:
+        await _send_followup(interaction, f"Error: {exc}")
+        raise
+
+    await _send_followup(interaction, result["message"])
+
+
+@bot.tree.command(
+    name="openchatgpt",
+    description="Open the project's ChatGPT chat so you can log in or check it.",
+)
+@app_commands.describe(project="Project key from config.json")
+async def open_chatgpt_command(
+    interaction: discord.Interaction,
+    project: str = DEFAULT_PROJECT,
+):
+    await interaction.response.defer(thinking=True)
+    loop = asyncio.get_running_loop()
+    progress = _make_progress_sender(interaction, loop)
+
+    try:
+        result = await loop.run_in_executor(
+            executor,
+            lambda: open_chatgpt_chat(project_name=project, progress=progress),
+        )
+    except Exception as exc:
+        await _send_followup(interaction, f"Error: {exc}")
+        raise
+
+    await _send_followup(interaction, result["message"])
+
+
+@bot.tree.command(
+    name="writelastresponse",
+    description="Humanize the last ChatGPT response and write it to Word (recovery).",
+)
+@app_commands.describe(project="Project key from config.json")
+async def write_last_response_command(
+    interaction: discord.Interaction,
+    project: str = DEFAULT_PROJECT,
+):
+    await interaction.response.defer(thinking=True)
+    loop = asyncio.get_running_loop()
+    progress = _make_progress_sender(interaction, loop)
+    configure_figure_input_fn(_make_figure_input_fn(interaction, loop))
+    configure_figure_interrupt_fn(_make_figure_interrupt_fn(interaction))
+    try:
+        async with interaction.channel.typing():
+            result = await loop.run_in_executor(
+                executor,
+                lambda: write_last_response(project_name=project, progress=progress),
+            )
+    except Exception as exc:
+        await _send_followup(interaction, f"Error: {exc}")
+        raise
+    finally:
+        configure_figure_input_fn(None)
+        configure_figure_interrupt_fn(None)
+
+    await _send_followup(
+        interaction,
+        (
+            "Done. Humanized the last response and wrote it to Word.\n"
+            f"Project: {result['project']}\n"
+            f"Document: {result['word_file_path']}"
+        ),
     )
 
 

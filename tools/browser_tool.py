@@ -8,6 +8,7 @@ browser_state.json after first login.
 
 import json
 import os
+import re
 import time
 import pyperclip
 from playwright.sync_api import sync_playwright, Page, BrowserContext
@@ -75,6 +76,31 @@ def snapshot_existing_figure_srcs() -> int:
     except Exception:
         pass
     return 0
+
+
+def _finalize_image(path: str) -> bool:
+    """Return True if *path* holds a real image Word can embed.
+
+    Formats python-docx cannot embed (e.g. WebP) are converted to PNG in place.
+    Anything that is not an image (an HTML error page, a truncated download)
+    is deleted so the caller falls through to its next download approach.
+    """
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            im.load()
+            if im.format in ("PNG", "JPEG", "GIF", "BMP"):
+                return True
+            converted = im.convert("RGBA" if "A" in im.getbands() else "RGB")
+        converted.save(path, "PNG")
+        return True
+    except Exception as exc:
+        print(f"  [Browser] Saved figure is not a valid image ({exc}) — discarding.")
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return False
 
 
 # ──────────────────────────────────────────────
@@ -172,6 +198,7 @@ _LOGGED_IN_SELECTORS = [
     'button[aria-label*="account" i]',
     'nav[aria-label*="history" i]',
     'a[href="/"]>svg',          # sidebar home icon (logged-in layout)
+    'a[href^="/c/"]',           # sidebar chat history (logged-in only)
 ]
 
 # Selectors that appear on the logged-OUT / guest landing page
@@ -254,6 +281,8 @@ def _find_textarea(page: Page):
     """Return the ChatGPT input element, trying several selectors."""
     selectors = [
         "#prompt-textarea",
+        '[data-composer-input] div[contenteditable="true"]',
+        'div[contenteditable="true"][role="textbox"]',
         'div[contenteditable="true"][data-id="root"]',
         'div[contenteditable="true"]',
         'textarea[data-id="root"]',
@@ -274,7 +303,11 @@ def _type_text(page: Page, selector: str, text: str):
     Saves and restores the user's clipboard so parallel copy-paste work is
     not disrupted.  Falls back to keyboard.type if clipboard is unavailable.
     """
-    page.click(selector)
+    try:
+        page.click(selector, timeout=5_000)
+    except Exception:
+        # An overlay (e.g. a dialog) can intercept the click — focus directly.
+        page.locator(selector).first.focus()
     page.wait_for_timeout(400)
     # Clear existing content
     page.keyboard.press("Control+a")
@@ -309,7 +342,7 @@ def _count_assistant_messages(page: Page) -> int:
     """Return the number of assistant messages currently on the page."""
     try:
         return page.evaluate(
-            "() => document.querySelectorAll('[data-message-author-role=\"assistant\"]').length"
+            "() => document.querySelectorAll('[data-message-author-role=\"assistant\"], [data-chatgpt-search-unit-key$=\":assistant\"], [data-testid=\"generated-image-gallery\"]').length"
         )
     except Exception:
         return 0
@@ -325,7 +358,7 @@ def _get_last_assistant_text(page: Page) -> str:
     try:
         return page.evaluate("""
             () => {
-                const msgs = document.querySelectorAll('[data-message-author-role="assistant"]');
+                const msgs = document.querySelectorAll('[data-message-author-role="assistant"], [data-chatgpt-search-unit-key$=":assistant"], [data-testid="generated-image-gallery"]');
                 if (!msgs.length) return '';
                 return (msgs[msgs.length - 1].textContent || '').trim().slice(-120);
             }
@@ -355,6 +388,8 @@ def _wait_for_generation_complete(
         'button[data-testid="stop-button"]',
         'button[aria-label="Stop generating"]',
         'button[aria-label="Stop streaming"]',
+        'button[aria-label="Stop"]',
+        '[data-talvt-turn-state="in_progress"]',
     ]
     combined = ", ".join(stop_selectors)
 
@@ -435,10 +470,14 @@ def _extract_last_response(page: Page) -> str:
     """
     js = """
     () => {
-        const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
+        const messages = document.querySelectorAll('[data-message-author-role="assistant"], [data-chatgpt-search-unit-key$=":assistant"]');
         if (!messages.length) return '';
         const last = messages[messages.length - 1];
-        const markdown = last.querySelector('.markdown, .prose, [class*="markdown"]') || last;
+        // Current layout: one or more markdown roots per reply.  Walking the
+        // whole unit would also pick up the hidden "ChatGPT said:" heading.
+        const roots = last.querySelectorAll('[data-markdown-text-style="assistant-message"]');
+        const markdown = roots.length ? null
+            : (last.querySelector('.markdown, .prose, [class*="markdown"]') || last);
 
         function walk(node) {
             if (node.nodeType === 3) return node.textContent;
@@ -486,7 +525,9 @@ def _extract_last_response(page: Page) -> str:
                 let inner = '';
                 node.childNodes.forEach(c => {
                     const ct = (c.tagName || '').toLowerCase();
-                    if (ct === 'strong') inner += '**' + c.textContent + '**';
+                    const isStrong = ct === 'strong' ||
+                        (c.hasAttribute && c.hasAttribute('data-d-default-strong'));
+                    if (isStrong) inner += '**' + c.textContent.trim() + '**';
                     else if (ct === 'em')     inner += '*' + c.textContent + '*';
                     else inner += walk(c);
                 });
@@ -523,11 +564,95 @@ def _extract_last_response(page: Page) -> str:
             return out;
         }
 
-        return walk(markdown).trim();
+        if (markdown) return walk(markdown).trim();
+        return Array.from(roots).map(r => walk(r).trim()).filter(Boolean).join('\\n\\n');
     }
     """
     result = page.evaluate(js)
     return result or ""
+
+
+# The current ChatGPT renderer does not typeset LaTeX and drops {…} groups from
+# the visible text (e.g. "\sum_{i=1}^{n}" shows as "\sum_^"), so the DOM can no
+# longer be trusted for equations.  The conversation API returns the exact
+# markdown the model wrote; the DOM walker above is only the fallback.
+_CONVERSATION_API_JS = """
+async () => {
+    const m = location.pathname.match(/\\/c\\/([0-9a-f-]+)/i);
+    if (!m) return null;
+    const session = await (await fetch('/api/auth/session')).json();
+    if (!session || !session.accessToken) return null;
+    const r = await fetch('/backend-api/conversation/' + m[1],
+        {headers: {Authorization: 'Bearer ' + session.accessToken}});
+    if (!r.ok) return null;
+    const conv = await r.json();
+    const chain = [];
+    for (let n = conv.mapping[conv.current_node]; n; n = n.parent ? conv.mapping[n.parent] : null)
+        chain.push(n);
+    chain.reverse();
+    // Visible reply text = assistant text messages after the last user prompt
+    // (skips tool calls, thoughts, reasoning recaps and hidden context nodes).
+    const parts = [];
+    for (const node of chain) {
+        const msg = node.message;
+        if (!msg || !msg.content) continue;
+        const role = msg.author && msg.author.role;
+        if (role === 'user' && msg.content.content_type === 'text') parts.length = 0;
+        if (role !== 'assistant' || msg.content.content_type !== 'text') continue;
+        if (msg.recipient && msg.recipient !== 'all') continue;
+        if (msg.metadata && msg.metadata.is_visually_hidden_from_conversation) continue;
+        const text = (msg.content.parts || []).filter(p => typeof p === 'string').join('\\n');
+        if (text.trim()) parts.push(text);
+    }
+    return parts.join('\\n\\n');
+}
+"""
+
+_TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$")
+_HR_RE = re.compile(r"^\s*([-*_])(\s*\1){2,}\s*$")
+_LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+
+
+def _normalize_api_markdown(md: str) -> str:
+    """Convert raw ChatGPT markdown to the format the DOM walker produced
+    (and tools/parser.py expects): $$…$$ / $…$ math, tab-separated table
+    rows, '- ' list items, headings without bold markers, no UI markup."""
+    md = md.replace("\r\n", "\n")
+    md = re.sub(r"<MessageReaction\b[^>]*/>\s*", "", md)
+    md = re.sub(".*?", "", md, flags=re.S)        # citation pills
+    md = re.sub("[-]", "", md)
+    md = re.sub(r"\\\[(.+?)\\\]", lambda m: "$$" + m.group(1).strip() + "$$", md, flags=re.S)
+    md = re.sub(r"\\\((.+?)\\\)", lambda m: "$" + m.group(1).strip() + "$", md, flags=re.S)
+    md = re.sub(r"(?<!!)\[([^\]\n]+)\]\((?:https?://|/)[^)\s]*\)", r"\1", md)  # links → text
+
+    out = []
+    for line in md.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("|") and stripped.count("|") >= 2:
+            if _TABLE_SEPARATOR_RE.match(stripped):
+                continue
+            cells = stripped.replace("\\|", "\0").strip("|").split("|")
+            cells = [c.replace("\0", "|").replace("**", "").strip() for c in cells]
+            out.append("\t".join(cells))
+        elif _HR_RE.match(stripped):
+            out.append("")
+        elif stripped.startswith("#"):
+            out.append(stripped.replace("**", ""))
+        elif _LIST_ITEM_RE.match(line) and not re.match(r"^\s*\d+\.\d", line):
+            out.append("- " + _LIST_ITEM_RE.sub("", line, count=1).strip())
+        else:
+            out.append(line.rstrip())
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+
+
+def _fetch_last_response_markdown(page: Page) -> str:
+    """Return the last reply via the conversation API, or '' if unavailable."""
+    try:
+        md = page.evaluate(_CONVERSATION_API_JS)
+    except Exception as exc:
+        print(f"  [Browser] Conversation API read failed: {exc}")
+        return ""
+    return _normalize_api_markdown(md) if md else ""
 
 
 # ──────────────────────────────────────────────
@@ -662,6 +787,8 @@ _SEND_SELECTORS = [
     'button[data-testid="send-button"]',
     'button[aria-label="Send message"]',
     'button[aria-label="Send prompt"]',
+    'button[aria-label="Send"]',
+    'form[data-chatgpt-composer] button[type="submit"]',
 ]
 
 
@@ -760,7 +887,20 @@ def get_last_response() -> str:
     if not _page or _page.is_closed():
         return "Error: browser not open."
     _page.wait_for_timeout(500)
-    text = _extract_last_response(_page)
+    dom_text = _extract_last_response(_page)
+
+    # Prefer the exact markdown from the API.  If it is clearly shorter than
+    # what is on screen, the server may not have stored the final chunk yet.
+    for attempt in range(2):
+        api_text = _fetch_last_response_markdown(_page)
+        if api_text and len(api_text) >= 0.8 * len(dom_text):
+            return api_text
+        if attempt == 0:
+            _page.wait_for_timeout(2_000)
+    if api_text:
+        print("  [Browser] API reply shorter than on-screen text — using on-screen text.")
+
+    text = dom_text
     return text if text else "Could not extract response — the page may still be loading."
 
 
@@ -791,7 +931,7 @@ _SCAN_FOR_IMAGE_JS = """
         const baseline = (args && args.baseline) || 0;
         const excludeSet = new Set((args && args.exclude) || []);
 
-        const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
+        const messages = document.querySelectorAll('[data-message-author-role="assistant"], [data-chatgpt-search-unit-key$=":assistant"], [data-testid="generated-image-gallery"]');
         if (!messages.length) return null;
 
         const validScheme = s => s && !s.endsWith('.svg') && (
@@ -865,19 +1005,23 @@ _SCAN_FOR_IMAGE_JS = """
         // assistant message still contains words like "draw / creating / generating"
         // (descriptive text that persists after generation finishes).
         // Old figures are guarded from reuse by excludeSet, not by keyword order.
-        const MIN_AREA = 10000;
+        const MIN_AREA = 250000;  // page-wide scan: real figures are >= 1024 px; skips icons/avatars
         const UI_CHROME_TAGS = new Set(['nav', 'aside', 'header', 'footer']);
         function isUiChrome(el) {
             // Exclude images whose alt text marks them as profile/avatar photos
             const alt = (el.getAttribute ? (el.getAttribute('alt') || '') : '').toLowerCase();
             if (alt.includes('profile') || alt.includes('avatar') ||
                 alt.includes('your photo') || alt.includes('user photo')) return true;
+            const src = (el.getAttribute ? (el.getAttribute('src') || '') : '').toLowerCase();
+            const cls = (typeof el.className === 'string') ? el.className : '';
+            if (src.includes('/avatars/') || src.includes('avatar') || cls.includes('rounded-full')) return true;
             let node = el.parentElement;
             while (node) {
                 const tag = (node.tagName || '').toLowerCase();
                 if (UI_CHROME_TAGS.has(tag)) return true;
                 if (node.getAttribute) {
                     if (node.getAttribute('data-message-author-role') === 'user') return true;
+                    if ((node.getAttribute('data-chatgpt-search-unit-key') || '').endsWith(':user')) return true;
                     // Profile / account buttons and containers (ChatGPT uses these for the
                     // user-avatar button in the top-right corner and sidebar).
                     const testid = (node.getAttribute('data-testid') || '').toLowerCase();
@@ -918,7 +1062,8 @@ _SCAN_FOR_IMAGE_JS = """
                 'analyzing', 'creating', 'generating', 'drawing',
                 'working on', 'running', 'producing', 'rendering', 'one last tweak',
                 'creating image', 'sketching it out', 'adding final touches',
-                'making first draft', 'publishing details'
+                'making first draft', 'making the first draft', 'publishing details',
+                'loading images', 'chatgpt is responding'
             ];
             if (activeKeywords.some(kw => lastText.includes(kw)))
                 return { type: 'creating' };
@@ -973,7 +1118,7 @@ def screenshot_figure(save_path: str, baseline_msg_count: int = 0) -> bool:
             let bestSrc = null, bestArea = 0;
 
             // Primary: scan new assistant messages only (after baseline)
-            const msgs = document.querySelectorAll('[data-message-author-role="assistant"]');
+            const msgs = document.querySelectorAll('[data-message-author-role="assistant"], [data-chatgpt-search-unit-key$=":assistant"], [data-testid="generated-image-gallery"]');
             const start = Math.max(baseline, Math.max(0, msgs.length - 5));
             for (let j = msgs.length - 1; j >= start; j--) {
                 for (const img of msgs[j].querySelectorAll('img[src]')) {
@@ -996,12 +1141,16 @@ def screenshot_figure(save_path: str, baseline_msg_count: int = 0) -> bool:
                 const alt = (el.getAttribute ? (el.getAttribute('alt') || '') : '').toLowerCase();
                 if (alt.includes('profile') || alt.includes('avatar') ||
                     alt.includes('your photo') || alt.includes('user photo')) return true;
+            const src = (el.getAttribute ? (el.getAttribute('src') || '') : '').toLowerCase();
+            const cls = (typeof el.className === 'string') ? el.className : '';
+            if (src.includes('/avatars/') || src.includes('avatar') || cls.includes('rounded-full')) return true;
                 let node = el.parentElement;
                 while (node) {
                     const tag = (node.tagName || '').toLowerCase();
                     if (UI_CHROME_TAGS.has(tag)) return true;
                     if (node.getAttribute) {
                         if (node.getAttribute('data-message-author-role') === 'user') return true;
+                        if ((node.getAttribute('data-chatgpt-search-unit-key') || '').endsWith(':user')) return true;
                         // Profile / account buttons and containers
                         const testid = (node.getAttribute('data-testid') || '').toLowerCase();
                         if (testid.includes('profile') || testid.includes('avatar') ||
@@ -1024,7 +1173,7 @@ def screenshot_figure(save_path: str, baseline_msg_count: int = 0) -> bool:
                 const area = imgArea(img);
                 if (area > bestArea) { bestArea = area; bestSrc = img.src; }
             }
-            return (bestSrc && bestArea >= 10000) ? { src: bestSrc, area: bestArea } : null;
+            return (bestSrc && bestArea >= 250000) ? { src: bestSrc, area: bestArea } : null;
         }
     """, {"baseline": baseline_msg_count, "exclude": list(_downloaded_figure_srcs)})
 
@@ -1041,7 +1190,8 @@ def screenshot_figure(save_path: str, baseline_msg_count: int = 0) -> bool:
                         f.write(response.body())
                     _downloaded_figure_srcs.add(src)
                     print(f"  [Browser] screenshot_figure: saved via HTTPS request.")
-                    return True
+                    if _finalize_image(save_path):
+                        return True
             except Exception as exc:
                 print(f"  [Browser] screenshot_figure HTTPS request failed: {exc}")
 
@@ -1068,7 +1218,8 @@ def screenshot_figure(save_path: str, baseline_msg_count: int = 0) -> bool:
                     f.write(_b64.b64decode(b64))
                 _downloaded_figure_srcs.add(src)
                 print(f"  [Browser] screenshot_figure: saved via JS fetch.")
-                return True
+                if _finalize_image(save_path):
+                    return True
         except Exception as exc:
             print(f"  [Browser] screenshot_figure JS fetch failed: {exc}")
 
@@ -1076,7 +1227,7 @@ def screenshot_figure(save_path: str, baseline_msg_count: int = 0) -> bool:
     # Tries even when JS couldn't find a usable src (e.g. canvas-rendered images).
     try:
         from PIL import ImageGrab  # type: ignore
-        all_msgs = _page.locator('[data-message-author-role="assistant"]')
+        all_msgs = _page.locator('[data-message-author-role="assistant"], [data-chatgpt-search-unit-key$=":assistant"], [data-testid="generated-image-gallery"]')
         msg_count = all_msgs.count()
         best_el = None
         best_area = 0
@@ -1101,7 +1252,8 @@ def screenshot_figure(save_path: str, baseline_msg_count: int = 0) -> bool:
             if img is not None:
                 img.save(save_path, "PNG")
                 print(f"  [Browser] screenshot_figure: saved via clipboard.")
-                return True
+                if _finalize_image(save_path):
+                    return True
             _page.keyboard.press("Escape")
     except Exception as exc:
         print(f"  [Browser] screenshot_figure clipboard copy failed: {exc}")
@@ -1109,7 +1261,7 @@ def screenshot_figure(save_path: str, baseline_msg_count: int = 0) -> bool:
     # ── Approach 4: Playwright element.screenshot() — last resort ─────────────
     # Needs visible window but captures anything including canvas/WebGL.
     try:
-        all_msgs = _page.locator('[data-message-author-role="assistant"]')
+        all_msgs = _page.locator('[data-message-author-role="assistant"], [data-chatgpt-search-unit-key$=":assistant"], [data-testid="generated-image-gallery"]')
         msg_count = all_msgs.count()
         best_el = None
         best_area = 0
@@ -1126,7 +1278,8 @@ def screenshot_figure(save_path: str, baseline_msg_count: int = 0) -> bool:
         if best_el and best_area >= _MIN_FIGURE_AREA:
             best_el.screenshot(path=save_path)
             print(f"  [Browser] screenshot_figure: saved via element screenshot (area={best_area:.0f}).")
-            return True
+            if _finalize_image(save_path):
+                return True
     except Exception as exc:
         print(f"  [Browser] screenshot_figure element screenshot failed: {exc}")
 
@@ -1146,7 +1299,7 @@ def get_message_count() -> int:
         return 0
     try:
         return int(_page.evaluate(
-            "() => document.querySelectorAll('[data-message-author-role=\"assistant\"]').length"
+            "() => document.querySelectorAll('[data-message-author-role=\"assistant\"], [data-chatgpt-search-unit-key$=\":assistant\"], [data-testid=\"generated-image-gallery\"]').length"
         ))
     except Exception:
         return 0
@@ -1179,8 +1332,23 @@ def _try_copy_button(save_path: str) -> bool:
     # to skip "Copy code" buttons inside code blocks.
     clicked = _page.evaluate("""
         () => {
-            // Most-specific selectors first — these target the per-message copy action,
-            // not the "Copy code" buttons inside code blocks.
+            // Current layout: each turn container holds the user message
+            // ("Copy message" button) AND the assistant reply ("Copy" button),
+            // so only the exact "Copy" label inside the last turn is the reply's.
+            const turns = document.querySelectorAll('[data-talvt-turn-state]');
+            if (turns.length) {
+                const turn = turns[turns.length - 1];
+                let btns = turn.querySelectorAll('button[aria-label="Copy image"]');
+                if (!btns.length) btns = turn.querySelectorAll('button[aria-label="Copy"]');
+                if (btns.length) {
+                    btns[btns.length - 1].click();
+                    return 'turn-copy';
+                }
+                // "Copy message" now belongs to the USER message — never fall back to it.
+                return null;
+            }
+            // Older layout: most-specific selectors first — these target the
+            // per-message copy action, not the "Copy code" buttons in code blocks.
             const selectors = [
                 '[data-testid="copy-turn-action-button"]',
                 'button[aria-label="Copy response"]',
@@ -1215,7 +1383,8 @@ def _try_copy_button(save_path: str) -> bool:
             img.save(save_path, "PNG")
             _downloaded_figure_srcs.add(f"clipboard:{save_path}")
             print("  [Browser] _try_copy_button: saved via PIL clipboard image.")
-            return True
+            if _finalize_image(save_path):
+                return True
     except Exception as exc:
         print(f"  [Browser] _try_copy_button PIL grab failed: {exc}")
 
@@ -1230,7 +1399,8 @@ def _try_copy_button(save_path: str) -> bool:
                     f.write(response.body())
                 _downloaded_figure_srcs.add(url)
                 print("  [Browser] _try_copy_button: saved via clipboard URL.")
-                return True
+                if _finalize_image(save_path):
+                    return True
     except Exception as exc:
         print(f"  [Browser] _try_copy_button URL approach failed: {exc}")
 
@@ -1262,7 +1432,8 @@ def _try_copy_button(save_path: str) -> bool:
                 f.write(_b64.b64decode(b64))
             _downloaded_figure_srcs.add(f"clipboard:{save_path}")
             print("  [Browser] _try_copy_button: saved via JS clipboard API.")
-            return True
+            if _finalize_image(save_path):
+                return True
     except Exception as exc:
         print(f"  [Browser] _try_copy_button JS clipboard API failed: {exc}")
 
@@ -1381,7 +1552,8 @@ def download_last_generated_image(
                 if _try_screenshot():
                     if progress:
                         progress("Downloading figure… captured via screenshot.")
-                    return True
+                    if _finalize_image(save_path):
+                        return True
 
             if idle_for >= IDLE_TIMEOUT:
                 print("  [Browser] No image or activity detected — giving up.")
@@ -1424,13 +1596,15 @@ def download_last_generated_image(
         if _try_copy_button(save_path):
             if progress:
                 progress("Downloading figure… saved via copy-response clipboard.")
-            return True
+            if _finalize_image(save_path):
+                return True
         # Final fallback: Playwright element screenshot.
         print("  [Browser] Trying final Phase 3 screenshot.")
         if _try_screenshot():
             if progress:
                 progress("Downloading figure… captured via screenshot.")
-            return True
+            if _finalize_image(save_path):
+                return True
         return False
 
     # ── Phase 0: copy-response button (image confirmed ready by polling loop) ──
@@ -1444,7 +1618,8 @@ def download_last_generated_image(
             _downloaded_figure_srcs.add(result['src'])
         if progress:
             progress("Downloading figure… saved via copy-response clipboard.")
-        return True
+        if _finalize_image(save_path):
+            return True
 
     # ── Phase 1: direct download from img src or canvas data URL ─────────────
     try:
@@ -1470,14 +1645,16 @@ def download_last_generated_image(
             with open(save_path, "wb") as f:
                 f.write(img_bytes)
             _downloaded_figure_srcs.add(src)
-            return True
+            if _finalize_image(save_path):
+                return True
 
         if result.get('type') == 'canvas':
             _, b64 = result['data'].split(",", 1)
             img_bytes = _b64.b64decode(b64)
             with open(save_path, "wb") as f:
                 f.write(img_bytes)
-            return True
+            if _finalize_image(save_path):
+                return True
 
     except Exception as exc:
         print(f"  [Browser] JS image extraction failed: {exc}")
@@ -1488,7 +1665,7 @@ def download_last_generated_image(
     # in that modal triggers the actual browser file-download.
     _FIND_DOWNLOAD_BTN_JS = """
         () => {
-            const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
+            const messages = document.querySelectorAll('[data-message-author-role="assistant"], [data-chatgpt-search-unit-key$=":assistant"], [data-testid="generated-image-gallery"]');
             if (!messages.length) return false;
             // Scan last 5 messages newest-first so we find the figure even when
             // a variant-selection or thinking response has pushed it back.
@@ -1540,7 +1717,8 @@ def download_last_generated_image(
                     download.save_as(save_path)
                     _page.keyboard.press("Escape")
                     _page.wait_for_timeout(500)
-                    return True
+                    if _finalize_image(save_path):
+                        return True
             except Exception as exc:
                 print(f"  [Browser] Modal Download button failed: {exc}")
 
@@ -1585,7 +1763,8 @@ def download_last_generated_image(
                     f.write(img_bytes)
                 _page.keyboard.press("Escape")
                 _page.wait_for_timeout(500)
-                return True
+                if _finalize_image(save_path):
+                    return True
 
             _page.keyboard.press("Escape")
             _page.wait_for_timeout(500)
@@ -1596,7 +1775,8 @@ def download_last_generated_image(
     # ── Phase 3: Playwright element screenshot ───────────────────────────────
     print("  [Browser] Trying Phase 3: element screenshot fallback.")
     if _try_screenshot():
-        return True
+        if _finalize_image(save_path):
+            return True
 
     return False
 
