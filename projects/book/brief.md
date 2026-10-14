@@ -47,6 +47,18 @@ Project-specific settings. Change this file, not code, for a new book.
 - The /instruct figures preset still says "AT LEAST 4–5 figures"; the cap is given to ChatGPT as a
   short extra note before the next prompt rather than by editing the preset.
 
+## Chapter length: 25–26 Word pages (user's decision, 2026-10-14)
+- The book must be about 350–400 pages for 15 chapters, so EVERY chapter is at most 25–26 pages in
+  Word (measured with `work/page_count.py` / `work/compress_tools.py render`).
+- That is about 11,000 prose words per chapter: intro ≈ 600, each of X.1–X.6 ≈ 1,550 (≈ 200 per
+  subsection), X.7 + X.8 ≈ 900. All sections X.1–X.8 and all subsections X.X.X stay; figures (5–6),
+  equations and tables stay; paragraphs merged so none is only 1–2 lines.
+- Chapters 1–7.2 (written before this rule, 429 pages in total) are being compressed to this size
+  from their blocks files (`work/compress_rules.md`), re-humanized, and the Word file rebuilt from
+  `archive/base_front_matter.docx`. The full version is kept in `archive/`.
+- For new units: ChatGPT gets the length rule (work/length_rule.md); a reply longer than the unit
+  budget is condensed by the writer BEFORE humanizing.
+
 ## Numbering (user's decision)
 - **Caption numbers in the text must equal Word's caption numbers** for figures AND tables.
   Word numbers captions continuously through the book, so the next figure/table in the text must be

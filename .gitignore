@@ -20,7 +20,14 @@ env/
 *.log
 
 # Claude workflow runtime data (book content, figures, backups)
-projects/*/work/
+projects/*/work/*
+# ...but keep the workflow tools and rule files (no book content)
+!projects/*/work/*.py
+!projects/*/work/*.ps1
+!projects/*/work/writer_common.md
+!projects/*/work/compress_rules.md
+!projects/*/work/length_rule.md
+projects/*/archive/
 projects/*/figures/
 projects/*/backups/
 projects/*/logs/
