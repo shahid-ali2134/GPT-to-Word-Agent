@@ -15,6 +15,15 @@ Paths are relative to `projects/book/`. Also follow your agent file and `brief.m
 - If ChatGPT's reply is longer, condense it to the budget BEFORE humanizing (same method as
   work/compress_rules.md). Report the prose word count.
 
+## ZERO REPETITION (user, 2026-10-14, book-wide; see brief.md)
+- No equation, definition, explanation, figure or table may repeat anything already in the book,
+  even in other notation (e.g. cosine similarity is defined ONLY in 1.5.3; the chain-rule
+  next-token product ONLY in 1.3.3; utilization rho = lambda/(k mu) ONLY in 1.6/2.3.5). Use a
+  back-reference and add only new material. ChatGPT often re-derives basics: cut them.
+- Before returning, run from projects/book/work: `python dup_check.py <blocks>`,
+  `python dup_check_loose.py <blocks>`, `python concept_eq_check.py <blocks>`. Fix every NEW: hit
+  (or explain why it is a use, not a redefinition) and report the result.
+
 ## RESERVED SYMBOLS (already used in Word; never reuse with a different meaning)
 \rho utilization, \lambda arrival rate, \mu service rate (reuse only with these meanings);
 \kappa schema compatibility (Ch 2–6, many places), \xi contextual attributes (Ch 4), \upsilon label

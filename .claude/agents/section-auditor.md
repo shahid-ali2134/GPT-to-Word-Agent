@@ -28,6 +28,13 @@ Check every block:
 5. **Figures:** open every image with Read; it matches its caption, labels spelled correctly, not a duplicate; caption is one precise sentence; referenced in prose with the right number.
 6. **Facts:** nothing false or invented.
 7. `validate_blocks`: zero errors.
+8. **ZERO REPETITION (user's rule, book-wide):** from `projects/book/work`, run
+   `python dup_check.py <blocks>`, `python dup_check_loose.py <blocks>` and
+   `python concept_eq_check.py <blocks>` (Bash is not in your tools: ask for the output in your
+   report if you cannot run them, and do the same checks by Grep over `work/ch*/c*r*.blocks.json`
+   and `work/ch0[7-9]/r*.blocks.json`). Any equation, definition, explanation, figure or table
+   that already exists earlier in the book (even with other symbols or wording) must become a
+   back-reference plus only the new material. A redefinition you cannot fix by editing is FAIL.
 
 Fix small issues yourself by editing the JSON (wording, grammar, a reference,
 a table cell). Return FAIL only for things you can't fix by

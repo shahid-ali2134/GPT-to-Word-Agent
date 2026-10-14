@@ -86,6 +86,18 @@ Project-specific settings. Change this file, not code, for a new book.
 - Tables: accurate, rectangular, header row, caption, referenced in prose.
 - Figures: the image matches its caption, all text in it spelled correctly and legible, not a duplicate; up to 3 redraws with a specific correction prompt, then escalate. Never insert a wrong figure.
 - No ChatGPT chatter, placeholders, leftover markdown, or content repeated from earlier in the book.
+
+## ZERO REPETITION, BOOK-WIDE (user, 2026-10-14)
+Nothing in the book may repeat anything already in it: no equation (even with renamed symbols or a
+different form: cosine, softmax, chain-rule products, utilization, losses, metrics...), no
+re-explained concept or definition, no figure showing the same thing, no table with the same
+content. A later section that needs an earlier idea gives a back-reference ("Section 1.5.3") and
+adds only what is new. Before every docx_append run, with the unit's blocks file:
+`python work/dup_check.py <blocks>` (exact equations, 12-word passages, figure images/captions,
+table titles; NEW: lines must be 0), `python work/dup_check_loose.py <blocks>` (same-structure
+equations, 8-word passages) and `python work/concept_eq_check.py <blocks>` (same concept defined
+twice). Every NEW: hit is fixed (replace with a back-reference or new material) or explained as a
+pure use of an earlier definition, not a redefinition.
 - Facts accurate; nothing invented.
 
 ## Humanization (StealthWriter)

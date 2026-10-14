@@ -46,6 +46,9 @@ Work dir: `work/chNN/` (NN = two-digit chapter). Units: `r01`, `r02`, … one pe
    FAIL → new section-writer for the same unit with the reasons; it must not resend the original
    prompt, it repairs by editing or by asking ChatGPT to rewrite the specific part (max 2 rounds).
    Still FAIL → ledger `issues`, tell the user, continue.
+4b. ZERO REPETITION gate (user's rule): from `projects/<project>/work` run `python dup_check.py
+   <blocks>`, `python dup_check_loose.py <blocks>`, `python concept_eq_check.py <blocks>`. Any hit
+   involving the NEW unit is fixed first (back-reference instead of repeating), never appended.
 5. `docx_append(project, blocks_file, chapter, section=unit)`. It auto-fixes the blocks first
    (`autofix` in the result) and retries a locked Word file for a minute. Validation errors → fix
    the blocks file, retry. Still locked → the user is pinged automatically; wait.
