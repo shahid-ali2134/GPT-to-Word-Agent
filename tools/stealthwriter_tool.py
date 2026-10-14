@@ -243,10 +243,57 @@ def _navigate_to_humanizer(page: Page, progress=None):
         page.goto(humanizer_url, wait_until="domcontentloaded", timeout=45_000)
         _wait_for_login_if_needed(page, progress)
 
+    # After login StealthWriter can redirect to /dashboard, which has no model
+    # buttons; make sure we end up on the humanizer itself.
+    _ensure_humanizer_url(page, humanizer_url, progress)
     save_browser_state()
 
 
+def _ensure_humanizer_url(page: Page, humanizer_url: str, progress=None):
+    for _ in range(3):
+        if "/humanizer" in (page.url or ""):
+            return
+        _report(progress, f"On {page.url}; opening the humanizer page.")
+        page.goto(humanizer_url, wait_until="domcontentloaded", timeout=45_000)
+        page.wait_for_timeout(1_500)
+
+
+class QuotaExhausted(RuntimeError):
+    """No StealthWriter humanizations left; retrying cannot help."""
+
+
+def _reload_humanizer(page: Page, progress=None):
+    """Reload the humanizer page so no result from a previous run is left on it
+    (a leftover 'Humanize More' panel makes a half-finished new result look done)."""
+    cfg = _stealthwriter_config()
+    humanizer_url = cfg.get("humanizer_url", "https://stealthwriter.ai/dashboard/humanizer")
+    try:
+        page.reload(wait_until="domcontentloaded", timeout=45_000)
+    except Exception:
+        page.goto(humanizer_url, wait_until="domcontentloaded", timeout=45_000)
+    _ensure_humanizer_url(page, humanizer_url, progress)
+    deadline = time.time() + 30
+    while time.time() < deadline and not _humanizer_ready(page):
+        page.wait_for_timeout(500)
+    _report(progress, "StealthWriter page reloaded.")
+
+
 def _select_mode(page: Page, mode_name: str, progress=None):
+    # A freshly opened page renders the model buttons a moment after the
+    # textarea, so retry for a while before giving up.
+    deadline = time.time() + 20
+    while True:
+        try:
+            return _select_mode_once(page, mode_name, progress)
+        except RuntimeError:
+            if time.time() > deadline:
+                raise
+            cfg = _stealthwriter_config()
+            _ensure_humanizer_url(page, cfg.get("humanizer_url", "https://stealthwriter.ai/dashboard/humanizer"), progress)
+            page.wait_for_timeout(1_000)
+
+
+def _select_mode_once(page: Page, mode_name: str, progress=None):
     _report(progress, f"Selecting StealthWriter mode: {mode_name}.")
 
     # Helper: click without scroll-into-view using force=True (trusted event).
@@ -378,7 +425,10 @@ def _is_valid_result(text: str, original: str) -> bool:
     "words", model names, the green/red legend, etc.) shares almost none — this
     guard rejects that chrome so it can never be written to the document.
     """
-    if not text or len(text.strip()) < 40:
+    # Short inputs (one sentence) give short results: scale the minimums to the
+    # input, otherwise a valid result is never accepted and the run times out.
+    min_len = min(40, len(original.strip()) // 2)
+    if not text or len(text.strip()) < min_len:
         return False
 
     orig_words = set(_WORD_RE.findall(original.lower()))
@@ -387,13 +437,13 @@ def _is_valid_result(text: str, original: str) -> bool:
         return False
     if not orig_words:
         # No content words in the original to compare against — accept on length.
-        return len(text.strip()) >= 40
+        return len(text.strip()) >= min_len
 
     overlap = len(orig_words & cand_words)
     ratio = overlap / len(cand_words)
     # Must share a substantial number of the original's content words AND not be
     # dominated by unrelated (UI) vocabulary.
-    return overlap >= 8 and ratio >= 0.15
+    return overlap >= min(8, max(2, len(orig_words) // 2)) and ratio >= 0.15
 
 
 def _extract_result_from_page(page: Page, original_text: str) -> str:
@@ -566,12 +616,13 @@ def _copy_result_via_button(page: Page, original: str) -> str:
         except Exception:
             pass
 
-    if (
-        copied
-        and copied != sentinel
-        and copied != original.strip()
-        and _is_valid_result(copied, original)
-    ):
+    if not copied or copied == sentinel or copied == original.strip():
+        return ""
+    if _is_valid_result(copied, original):
+        return copied
+    # A one- or two-sentence input can be reworded with almost no shared long
+    # words; the Copy button only ever yields the result, so accept on length.
+    if len(_WORD_RE.findall(original.lower())) < 12 and len(copied) >= 0.5 * len(original.strip()):
         return copied
     return ""
 
@@ -581,6 +632,15 @@ def _wait_for_result_and_copy(page: Page, original_text: str, timeout_sec: int, 
     deadline = time.time() + timeout_sec
     last_progress = time.time()
     orig = original_text.strip()
+
+    orig_words = len(orig.split())
+    last_candidate = ""
+
+    def _complete(text: str) -> bool:
+        # A 'Humanize More' button left over from the previous run makes the
+        # panel look ready while the new result is still streaming in, so only
+        # accept a result of plausible length that has stopped changing.
+        return len(text.split()) >= 0.7 * orig_words
 
     while time.time() < deadline:
         # Counter StealthWriter's own scroll-to-result JS.
@@ -594,14 +654,14 @@ def _wait_for_result_and_copy(page: Page, original_text: str, timeout_sec: int, 
         if _result_panel_ready(page):
             # Primary: the Copy button → clipboard (ground-truth humanized text,
             # works even when the result renders as interactive sentences).
-            copied = _copy_result_via_button(page, orig)
-            if copied:
-                return copied
-
             # Secondary: read the result text straight from the DOM.
-            dom_result = _extract_result_from_page(page, original_text)
-            if dom_result:
-                return dom_result
+            candidate = _copy_result_via_button(page, orig) or _extract_result_from_page(page, original_text)
+            if candidate and _complete(candidate):
+                if candidate == last_candidate:
+                    return candidate
+                last_candidate = candidate
+                page.wait_for_timeout(2_000)
+                continue
 
         # Report progress every 30 s so the user knows we are still waiting.
         now = time.time()
@@ -726,6 +786,9 @@ def _humanize_text_sync(
 
     page = _ensure_browser(browser_name)
     _navigate_to_humanizer(page, progress)
+    _reload_humanizer(page, progress)
+    if _read_humanizations_left(page) == 0:
+        raise QuotaExhausted("QUOTA: StealthWriter shows 0 humanizations left.")
     _select_mode(page, mode_name, progress)
 
     input_box = _find_humanizer_input(page, timeout_ms=10_000)

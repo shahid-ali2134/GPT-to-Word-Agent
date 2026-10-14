@@ -306,6 +306,14 @@ def validate_blocks(blocks: list[dict]) -> dict:
             continue
         stats[t] += 1
 
+        # A LaTeX command written with one backslash in JSON ("\rho", "\theta",
+        # "\frac") is read as a control character plus the rest of the word.
+        for key in ("text", "latex", "caption"):
+            val = b.get(key)
+            if isinstance(val, str) and re.search(r"[\x00-\x08\x0b-\x1f\t]", val):
+                errors.append(f"{where}: control character in {key} (broken JSON escape such as "
+                              f"\\rho or \\theta written with a single backslash?)")
+
         if t in TEXT_TYPES:
             text = (b.get("text") or "").strip()
             if not text:

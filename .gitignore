@@ -25,3 +25,4 @@ projects/*/figures/
 projects/*/backups/
 projects/*/logs/
 projects/*/ledger.json
+bookdev/

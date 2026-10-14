@@ -45,11 +45,17 @@ Paths given to tools are relative to `projects/<project>/`.
    look at it**. Accept only if it matches the caption, all text in it is spelled correctly and
    legible, and `duplicate_of` is null. Otherwise redraw with a specific correction prompt
    (up to 3 attempts). Put the accepted path in `"image"`; if none acceptable, report it.
-7. **Humanize.** `humanize_blocks(blocks_file)`. On a paragraph-count mismatch, map the raw
-   output to paragraphs yourself (restore KEEPTOKENs) or keep originals. If StealthWriter
-   fails (quota/login), stop and report.
-8. **Proofread** each humanized `text` against its `original`: fix grammar, spelling,
-   punctuation and any changed meaning or technical term with minimal edits.
+   Before humanizing, make sure every figure and table is referenced in the prose (add the
+   reference sentence now, so it gets humanized too).
+7. **Humanize ALL body text (user's rule: no ChatGPT text in Word).** `humanize_blocks(blocks_file)`.
+   If it reports `kept_original_blocks` or `not_humanized_blocks`, call it again with
+   `sentence_mode=True`; that humanizes those paragraphs around their math. On a paragraph-count
+   mismatch, map the raw output to paragraphs yourself (restore KEEPTOKENs); never fall back to
+   ChatGPT's text. If StealthWriter fails (quota/login), stop and report.
+8. **Light touch-up only.** Keep StealthWriter's text. Fix only sentences that are clearly odd:
+   ungrammatical, garbled, a broken technical term, British spelling, or a meaning that became
+   factually wrong. Fix them with fresh wording; never paste ChatGPT's `original` back in. Do not
+   polish style, and do not edit sentences that are merely different from the original.
 9. **Validate.** `validate_blocks` until zero errors; resolve or justify every warning.
 
 ## Return (short)

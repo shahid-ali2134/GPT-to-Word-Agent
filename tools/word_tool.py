@@ -423,14 +423,23 @@ def _write_equation_block(doc: Document, block, styles: dict):
     run.italic = True
 
 
-def _write_table_block(doc: Document, block, styles: dict):
+def _table_style_name(table_index: int) -> str:
+    """Colorful 'Grid Table 4 - Accent N' design, cycling accents 1-6 through the book."""
+    return f"Grid Table 4 Accent {table_index % 6 + 1}"
+
+
+def _write_table_block(doc: Document, block, styles: dict, blank_after: bool = True):
     """Add a Word table for a 'table' block. First row is treated as header."""
     rows = block.table_rows
     if not rows:
         return
     num_cols = max(len(r) for r in rows)
+    table_index = len(doc.tables)
     table = doc.add_table(rows=len(rows), cols=num_cols)
-    table.style = "Table Grid"
+    try:
+        table.style = _table_style_name(table_index)
+    except KeyError:
+        table.style = "Table Grid"
     cfg = styles.get("body", {})
     font_name = cfg.get("font", "Garamond")
     font_size = Pt(cfg.get("size_pt", 11))
@@ -460,7 +469,8 @@ def _write_table_block(doc: Document, block, styles: dict):
             run.font.size = font_size
 
     # Blank paragraph after table — caption (if any) will follow this
-    doc.add_paragraph()
+    if blank_after:
+        doc.add_paragraph()
 
 
 def _write_figure_block(doc: Document, block, styles: dict):

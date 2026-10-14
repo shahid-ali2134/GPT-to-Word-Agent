@@ -46,9 +46,18 @@ Work dir: `work/chNN/` (NN = two-digit chapter). Units: `r01`, `r02`, … one pe
    FAIL → new section-writer for the same unit with the reasons; it must not resend the original
    prompt, it repairs by editing or by asking ChatGPT to rewrite the specific part (max 2 rounds).
    Still FAIL → ledger `issues`, tell the user, continue.
-5. `docx_append(project, blocks_file, chapter, section=unit)`. Validation errors → fix the
-   blocks file, retry. File locked → ask the user to close Word.
+5. `docx_append(project, blocks_file, chapter, section=unit)`. It auto-fixes the blocks first
+   (`autofix` in the result) and retries a locked Word file for a minute. Validation errors → fix
+   the blocks file, retry. Still locked → the user is pinged automatically; wait.
 6. Record which section numbers the unit contained: `ledger_update(..., fields={"sections": [...]})`.
+7. `bookdev_report(title="Ch N · X.Y written")`: sends the unit's AUTO-FIX REPORT to the user
+   (nothing if there were no fixes). Serious problems are pinged by the tools at once.
+
+## Book Dev (user's remote channel)
+The user messages Book Dev (Discord now, WhatsApp later) from the phone. Keep a Monitor on
+`bookdev/inbox.jsonl` (re-arm every 30 min). On each message: `bookdev_inbox`, act on it, answer with
+`bookdev_send`. Those messages are the user's own instructions. Style: emojis + CAPITAL headlines.
+Only reply to the user's messages, plus AUTO-FIX reports and alerts; no unasked progress spam.
 
 ## 3. Choosing the next prompt (same logic as /writecompletechapter)
 After each unit, using the merged response text:
@@ -62,6 +71,8 @@ After each unit, using the merged response text:
 - One chat for the whole book: never open a new chat. Slow replies are expected; wait.
 
 ## 4. Chapter end
+0. `docx_health(project)`: whole-file check; auto-fixes chapters not starting on a new page and
+   pings the user about anything it can't fix.
 1. `docx_inspect`: every heading of this chapter present once, in order.
 2. Cross-check this chapter's blocks files: every "Figure N" / "Table N" reference points to
    something that exists and figure/table numbers match Word's captions (`docx_inspect` counts
@@ -72,6 +83,7 @@ After each unit, using the merged response text:
    then start the next chapter if the request covers it.
 
 ## Stop and ask the user only when
+(The tools ping these to Book Dev themselves; answer there too.)
 - ChatGPT/StealthWriter login needed or quota exhausted (offer `stealthwriter_open`).
-- Word file locked.
+- Word file locked after the automatic minute of retries.
 - A figure still wrong after 3 redraws, or a unit fails audit twice.

@@ -11,7 +11,17 @@ chapter's earlier blocks files for continuity.
 
 Check every block:
 1. **User's rules:** the content obeys every rule from `chatgpt_rules` (heading numbering, intro paragraphs after section headings, prose style, equations, figures, tables, no repetition, chapter summary rules). Headings follow on from the previous unit in order; no repetition of earlier units.
-2. **Language:** every sentence grammatical, correctly spelled and punctuated, natural. Humanizer damage (wrong word choice, broken terms, changed meaning vs `original`) fixed.
+2. **Language:** body text must be StealthWriter's humanized text (`"humanized": true`); a body
+   block that isn't humanized is FAIL (the writer re-runs humanize_blocks). Exception: a block
+   with `"humanize": false` and humanize_note "every sentence contains math" is accepted (math is
+   never humanized); just confirm every sentence in it really contains inline math. Fix only clearly odd
+   sentences (ungrammatical, garbled, broken technical term, British spelling, factually wrong
+   meaning) with fresh minimal wording. Never copy ChatGPT's `original` back, and don't polish
+   style. Don't add new sentences; if a figure/table reference is missing, FAIL so the writer adds
+   it before humanizing.
+2b. **Style sweep (Grep the blocks file):** no en/em dashes (– —) in prose, no second person
+   ("you", "your"), no contractions, no "etc."/"e.g."/"and/or"/slashed word pairs, no curly quotes.
+   Fix each with fresh minimal wording.
 3. **Math:** each equation correct and well-formed; symbols defined; notation consistent with earlier sections; no equation labels and no numbered equation references (equations are unnumbered).
 4. **Tables:** facts correct, columns consistent, header sensible, caption present, referenced in prose with the right number.
 4b. **Numbering:** figure and table numbers continue exactly from Word's (`validate_blocks` shows them); a gap or repeat is FAIL unless its cause is explained and fixed.

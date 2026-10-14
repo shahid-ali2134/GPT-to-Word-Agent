@@ -30,6 +30,23 @@ Project-specific settings. Change this file, not code, for a new book.
   extra topics into the last content sections as subsections, so every chapter stays 8 sections.
   Don't ask ChatGPT to exceed X.8. Just check that no outline topic was dropped.
 
+## Word layout (user's decisions, 2026-10-14)
+- Every chapter starts on a new page with its chapter title heading (the `chapter` block = Heading 1,
+  auto-numbered by the template). docx_writer sets page-break-before on every chapter heading after
+  the first; verify after appending a chapter's first unit.
+- Blank line before and after every equation, figure and table; for figures and tables the blank
+  line comes after the caption, never between object and caption.
+- Tables use "Grid Table 4 - Accent N", cycling accents 1-6 through the book.
+- Run all chapters back to back until the user says stop.
+
+## Figures per chapter (user's decision, 2026-10-14)
+- Maximum 5–6 figures per chapter, spread across the content sections (roughly one per section,
+  none in the Chapter Summary). Never 5 in one section.
+- Chapter 1 exception: section 1.1 already has 5 (Figures 1–5); sections 1.2–1.7 get only 2–3 more
+  in total, so chapter 1 ends with 7–8 figures.
+- The /instruct figures preset still says "AT LEAST 4–5 figures"; the cap is given to ChatGPT as a
+  short extra note before the next prompt rather than by editing the preset.
+
 ## Numbering (user's decision)
 - **Caption numbers in the text must equal Word's caption numbers** for figures AND tables.
   Word numbers captions continuously through the book, so the next figure/table in the text must be
@@ -52,7 +69,11 @@ Project-specific settings. Change this file, not code, for a new book.
 
 ## Humanization (StealthWriter)
 - Body paragraphs only (never headings, equations, tables, captions), one pass per response.
-- Then proofread every humanized paragraph against its original: fix grammar and any changed meaning or technical term with minimal edits.
+- User's rule (2026-10-14): humanize ALL body text and use it. No ChatGPT-worded paragraph goes to
+  Word; math-heavy paragraphs are humanized around the math (`sentence_mode=True`).
+- Afterwards adjust only the very odd sentences (garbled, ungrammatical, broken term, British
+  spelling, factually wrong) with fresh wording. Never restore ChatGPT's original phrasing, and
+  don't polish style.
 - Quota exhausted / logged out → stop and tell the user (`stealthwriter_open` helps them log in).
 
 ## Autonomy

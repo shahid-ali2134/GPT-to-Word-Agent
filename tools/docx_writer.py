@@ -33,18 +33,25 @@ def append_blocks(blocks: list[dict], word_file_path: str) -> str:
         if t in ("chapter", "heading2", "heading3", "body", "list_item"):
             _write_text(doc, t, b["text"], styles)
         elif t == "equation":
+            _spacer(doc)
             _write_equation(doc, b, styles)
+            _spacer(doc)
             needs_com = True
         elif t == "table":
-            wt._write_table_block(doc, Block("table", table_rows=b["rows"]), styles)
+            # Blank line before the table and after its caption, none in between.
+            _spacer(doc)
+            wt._write_table_block(doc, Block("table", table_rows=b["rows"]), styles, blank_after=False)
             wt._write_word_caption(doc, "Table", wt._strip_caption_prefix(b.get("caption", ""), "Table"))
+            _spacer(doc)
             needs_com = True
         elif t == "figure":
             fig = Block("figure")
             fig.figure_number = b["number"]
             fig.figure_image_path = b.get("image", "")
+            _spacer(doc)
             wt._write_figure_block(doc, fig, styles)
             wt._write_word_caption(doc, "Figure", wt._strip_caption_prefix(b.get("caption", ""), "Figure"))
+            _spacer(doc)
             needs_com = True
 
     doc.save(word_file_path)
@@ -53,13 +60,39 @@ def append_blocks(blocks: list[dict], word_file_path: str) -> str:
     return f"wrote {len(blocks)} block(s)"
 
 
+def _is_blank(el) -> bool:
+    """True for an empty paragraph: no text, no math, no image."""
+    if el.tag != f"{_W_NS}p":
+        return False
+    if el.findall(f".//{_M_NS}oMath") or el.findall(f".//{_W_NS}drawing"):
+        return False
+    return not "".join(t.text or "" for t in el.iter(f"{_W_NS}t")).strip()
+
+
+def _spacer(doc):
+    """Add one blank line, unless the document already ends with one."""
+    body = doc.element.body
+    last = [el for el in body if el.tag != f"{_W_NS}sectPr"]
+    if last and _is_blank(last[-1]):
+        return
+    doc.add_paragraph()
+
+
 def _write_text(doc, block_type: str, text: str, styles: dict):
     cfg = styles.get(wt.STYLE_KEY_MAP.get(block_type, "body"), {})
+    # Every chapter after the first starts on a new page (the template already
+    # breaks the page before chapter 1).
+    new_page = block_type == "chapter" and any(
+        p.style is not None and p.style.name == "Heading 1" and p.text.strip()
+        for p in doc.paragraphs
+    )
     try:
         para = doc.add_paragraph(style=wt.WORD_STYLE_MAP.get(block_type, "Normal"))
     except KeyError:
         para = doc.add_paragraph()
     wt._apply_paragraph_format(para, cfg)
+    if new_page:
+        para.paragraph_format.page_break_before = True
 
     if block_type == "list_item":
         text = "• " + text
