@@ -613,7 +613,16 @@ async def humanize_blocks(project: str, blocks_file: str, max_tokens_per_paragra
     elif not_humanized:
         _alert("Paragraphs still not humanized", [f"{blocks_file}: blocks {not_humanized}"]
                + problems[:3])
-    return {"humanized": done, "runs": runs, "problems": problems, "diagnosis": diagnosis,
+    try:
+        from tools import stealthwriter_tool
+        left = stealthwriter_tool.last_humanizations_left
+        left = left - 1 if isinstance(left, int) and left > 0 else left  # the last run used one
+    except Exception:
+        left = None
+    if isinstance(left, int) and 0 < left <= 10:
+        _alert("StealthWriter humanizations running low", [f"{left} left after {blocks_file}."])
+    return {"humanized": done, "runs": runs, "humanizations_left": left,
+            "problems": problems, "diagnosis": diagnosis,
             "math_only_blocks": math_only,
             "kept_original_blocks": [i for i in modes if i in not_humanized],
             "not_humanized_blocks": not_humanized,
@@ -757,7 +766,7 @@ async def bookdev_send(message: str) -> dict:
     messages. Use it to answer the owner's Book Dev messages and for stop
     conditions (quota, login, locked Word file)."""
     from tools import bookdev
-    return await _run(bookdev.send, message)
+    return await asyncio.to_thread(bookdev.send, message)  # not on the browser/Word thread
 
 
 @mcp.tool()
@@ -767,7 +776,7 @@ async def bookdev_report(title: str) -> dict:
     Sends nothing when there were no fixes. Serious problems are pinged at once
     by the tools themselves."""
     from tools import bookdev
-    return await _run(bookdev.report_fixes, title)
+    return await asyncio.to_thread(bookdev.report_fixes, title)
 
 
 @mcp.tool()

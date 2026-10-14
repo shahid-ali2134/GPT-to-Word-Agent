@@ -20,6 +20,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(ROOT, "config.json")
 
 _page: Page | None = None
+last_humanizations_left: int | None = None  # read from the page before each run
 
 
 def _load_config() -> dict:
@@ -787,7 +788,10 @@ def _humanize_text_sync(
     page = _ensure_browser(browser_name)
     _navigate_to_humanizer(page, progress)
     _reload_humanizer(page, progress)
-    if _read_humanizations_left(page) == 0:
+    left = _read_humanizations_left(page)
+    global last_humanizations_left
+    last_humanizations_left = left
+    if left == 0:
         raise QuotaExhausted("QUOTA: StealthWriter shows 0 humanizations left.")
     _select_mode(page, mode_name, progress)
 

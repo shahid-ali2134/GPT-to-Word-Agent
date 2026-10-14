@@ -15,6 +15,17 @@ Paths are relative to `projects/book/`. Also follow your agent file and `brief.m
 - If ChatGPT's reply is longer, condense it to the budget BEFORE humanizing (same method as
   work/compress_rules.md). Report the prose word count.
 
+## RESERVED SYMBOLS (already used in Word; never reuse with a different meaning)
+\rho utilization, \lambda arrival rate, \mu service rate (reuse only with these meanings);
+\kappa schema compatibility (Ch 2–6, many places), \xi contextual attributes (Ch 4), \upsilon label
+coverage (7.5), \varpi cost weight (8.5), \nu halving factor (7.2), \tau processing time (Ch 5),
+\psi_j metric functions (7.2), \eta thresholds (7.1), \delta_k paired differences (7.2), \gamma costs,
+\pi policy, \Phi validation, \Omega metadata, \phi feature map, g_\omega embedding (2.5.6), \chi
+revocation, \zeta certification checks, \theta learned parameters, F freshness, w_t watermark, Q(D)
+quality, bold Q/K/V attention (8.2), m attention heads (8.2) and models m_s, m_l (8.5), c context
+(8.1/8.3), q tool call (8.4), k top-k (8.2.7), n_shot shots (8.3), T_temp temperature, p_nuc.
+Before adding a symbol, Grep `work/ch*/c*r*.blocks.json` and `work/ch0[7-9]/r*.blocks.json` for it.
+
 ## Auto-fix (MCP does the mechanical repairs)
 - markdown_to_blocks now auto-fixes and lists them in `autofix`: broken LaTeX escapes, \tag/labels,
   unconvertible LaTeX commands, <text> wrappers, chatter, curly quotes, stray spaces, and figure/table
