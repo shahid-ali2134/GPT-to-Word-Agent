@@ -1441,6 +1441,51 @@ def _try_copy_button(save_path: str) -> bool:
     return False
 
 
+def fetch_recent_chat_images(max_messages: int = 4, min_area: int = 40_000) -> list[bytes]:
+    """Bytes of every sizeable image in the last *max_messages* assistant
+    messages, newest first, ignoring the downloaded-src cache. Used to recover a
+    figure that is in the chat but was missed by the normal scan; the caller
+    decides which image is new by comparing content hashes."""
+    global _page
+    if not _page or _page.is_closed():
+        return []
+    import base64 as _b64
+    srcs = _page.evaluate(
+        """(args) => {
+            const msgs = Array.from(document.querySelectorAll(
+                '[data-message-author-role="assistant"], [data-testid="generated-image-gallery"]'));
+            const out = [];
+            for (const m of msgs.slice(-args.n).reverse()) {
+                for (const img of m.querySelectorAll('img[src]')) {
+                    const s = img.src || '';
+                    if (s.endsWith('.svg') || out.includes(s)) continue;
+                    if (img.naturalWidth * img.naturalHeight < args.minArea) continue;
+                    if (s.startsWith('blob:') || s.startsWith('https://') || s.startsWith('data:image/')) out.push(s);
+                }
+            }
+            return out;
+        }""",
+        {"n": max_messages, "minArea": min_area},
+    )
+    images = []
+    for src in srcs or []:
+        try:
+            if src.startswith(("blob:", "data:")):
+                data_url = src if src.startswith("data:") else _page.evaluate("""
+                    async (url) => {
+                        const r = await fetch(url);
+                        const blob = await r.blob();
+                        return new Promise(res => { const fr = new FileReader();
+                            fr.onloadend = () => res(fr.result); fr.readAsDataURL(blob); });
+                    }""", src)
+                images.append(_b64.b64decode(data_url.split(",", 1)[1]))
+            else:
+                images.append(_page.request.get(src).body())
+        except Exception as exc:
+            print(f"  [Browser] could not fetch chat image: {exc}")
+    return images
+
+
 def download_last_generated_image(
     save_path: str,
     progress=None,

@@ -414,8 +414,31 @@ async def chatgpt_draw_figure(project: str, number: int, prompt: str = "", gpt_n
         ok = False
         diagnosis.append(f"draw failed ({str(e)[:120]})")
     if not ok or not os.path.exists(save_path):
-        # One automatic retry: reopen the chat and ask again.
-        diagnosis.append(f"figure {number}: no image downloaded -> reopened the chat and asked again")
+        # The image is often in the chat but missed by the scan: look for a new one
+        # (content not matching any figure file saved so far) before asking again.
+        def recover():
+            import hashlib
+            from tools.browser_tool import _finalize_image, fetch_recent_chat_images
+            known = set()
+            for f in os.listdir(fig_dir):
+                with open(os.path.join(fig_dir, f), "rb") as fh:
+                    known.add(hashlib.sha1(fh.read()).hexdigest())
+            for data in fetch_recent_chat_images():
+                if hashlib.sha1(data).hexdigest() not in known:
+                    with open(save_path, "wb") as fh:
+                        fh.write(data)
+                    return bool(_finalize_image(save_path))  # normalize to PNG
+            return False
+        try:
+            if await _run(recover):
+                ok = True
+                diagnosis.append(f"figure {number}: image was in the chat but the download missed it "
+                                 "-> recovered it from the chat (no new request)")
+        except Exception as e:
+            diagnosis.append(f"figure {number}: chat image recovery failed ({str(e)[:100]})")
+    if not ok or not os.path.exists(save_path):
+        # Not in the chat at all: reopen the chat and ask again once.
+        diagnosis.append(f"figure {number}: no new image in the chat -> reopened the chat and asked again")
         text = f"Please draw figure {gpt_number or number} again as an image."
 
         def reopen():
