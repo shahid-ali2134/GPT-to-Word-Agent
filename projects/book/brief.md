@@ -59,6 +59,15 @@ Project-specific settings. Change this file, not code, for a new book.
 - For new units: ChatGPT gets the length rule (work/length_rule.md); a reply longer than the unit
   budget is condensed by the writer BEFORE humanizing.
 
+## Figure styles must vary (user's decision, 2026-10-14)
+- Every figure gets a named visual style, rotating through this list so no two figures within
+  three of each other share a style, each with its own colour palette:
+  flowchart/swimlane, layered stack, timeline, cycle/loop, matrix/heatmap, hub-and-spoke,
+  side-by-side comparison, sequence diagram, funnel, tree/hierarchy, quadrant chart,
+  isometric 3D, data chart (line/bar).
+- The draw prompt names the style explicitly ("Draw figure N please! Style: <style>, palette:
+  <colours>, …"); the figure check rejects an image in the same style as the previous figures.
+
 ## Numbering (user's decision)
 - **Caption numbers in the text must equal Word's caption numbers** for figures AND tables.
   Word numbers captions continuously through the book, so the next figure/table in the text must be

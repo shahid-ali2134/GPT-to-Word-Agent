@@ -42,6 +42,11 @@ Paths are relative to `projects/book/`. Also follow your agent file and `brief.m
 - Right after `markdown_to_blocks` + numbering fixes, draw figures; make edits in few, batched writes.
 
 ## Figures
+- STYLE MUST VARY (user, 2026-10-14): before drawing, Read the previous 3 figure images in
+  `projects/book/figures/` and pick a style from brief.md "Figure styles must vary" that none of
+  them uses. Pass it in the prompt: `chatgpt_draw_figure(number=N, prompt="Draw figure N please!
+  Style: <style> (not boxes in layers), palette: <colours>. <what to show>")`. Reject and redraw an
+  image whose style matches the previous figures. Report the style used.
 - `chatgpt_draw_figure`, then Read the image: must match caption, spelling correct, legible, not a
   duplicate; up to 3 redraws with specific corrections.
 - Every figure/table must be referenced in prose; add the reference sentence BEFORE humanizing.
