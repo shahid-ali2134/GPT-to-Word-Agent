@@ -31,7 +31,11 @@ def append_blocks(blocks: list[dict], word_file_path: str) -> str:
     for b in blocks:
         t = b["type"]
         if t in ("chapter", "heading2", "heading3", "body", "list_item"):
-            _write_text(doc, t, b["text"], styles)
+            text = b["text"]
+            if t in ("heading2", "heading3"):
+                # Word numbers headings itself; a typed "12.5 " would show twice.
+                text = re.sub(r"^\s*\d+(\.\d+)+\s+", "", text)
+            _write_text(doc, t, text, styles)
         elif t == "equation":
             _spacer(doc)
             _write_equation(doc, b, styles)

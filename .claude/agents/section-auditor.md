@@ -27,6 +27,9 @@ Check every block:
    major grammar errors, no symbols written as plain text in prose (must be inline $...$ with
    proper subscripts/superscripts), no piecewise formula written as prose. Fix each with fresh
    minimal wording.
+2c. **math_repaired blocks:** a body block with "math_repaired" had a formula put back by rule
+   after humanizing. Check each such sentence reads correctly with the formula where it is; move it
+   by hand if not (never ask for a re-humanize).
 3. **Math:** each equation correct and well-formed; symbols defined; notation consistent with earlier sections; no equation labels and no numbered equation references (equations are unnumbered).
 4. **Tables:** facts correct, columns consistent, header sensible, caption present, referenced in prose with the right number.
 4b. **Numbering:** figure and table numbers continue exactly from Word's (`validate_blocks` shows them); a gap or repeat is FAIL unless its cause is explained and fixed.

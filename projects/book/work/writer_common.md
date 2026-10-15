@@ -94,6 +94,10 @@ Before adding a symbol, Grep `work/ch*/c*r*.blocks.json` and `work/ch0[7-9]/r*.b
 3. If `kept_original_blocks`/`not_humanized_blocks` still non-empty: sw_prepare.ps1, then
    `humanize_blocks(..., sentence_mode=True, max_words_per_run=4900)`.
 4. Quota exhausted ("humanizations left" 0 / limit message): STOP and report "QUOTA" — the orchestrator waits for the reset.
+4b. SAVE HUMANIZATIONS (user, 2026-10-15): if StealthWriter only dropped or doubled one or two
+   formula placeholders, humanize_blocks now repairs them in place (block gets "math_repaired")
+   instead of re-running. Read every math_repaired sentence and move the formula to the right
+   spot by hand if needed. Never re-humanize a paragraph just to fix one symbol; fix it manually.
 5. Touch-up: keep StealthWriter's text. Fix only clearly odd sentences (garbled, ungrammatical,
    broken technical term, British spelling, factually wrong) with fresh wording. Never paste the
    `original` back. No style polishing. Inline math must stay byte-identical.

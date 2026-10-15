@@ -630,6 +630,46 @@ async def humanize_blocks(project: str, blocks_file: str, max_tokens_per_paragra
             "validation": blk.validate_blocks(blocks)}
 
 
+_MAX_TOKEN_REPAIRS = 2
+
+
+def _repair_tokens(sent: str, got: str, expected: list[int]):
+    """Put lost or doubled KEEPTOKEN placeholders back into StealthWriter's output.
+
+    Duplicates and unknown numbers are dropped; a missing placeholder is inserted
+    after the word that preceded it in the text that was sent, if that word is
+    still present. Returns (fixed_text, notes), or None when more than
+    _MAX_TOKEN_REPAIRS placeholders need repair or one cannot be placed."""
+    seen, notes = set(), []
+
+    def keep_first(m):
+        n = int(m.group(1))
+        if n not in expected:
+            notes.append(f"dropped unknown placeholder {n}")
+            return ""
+        if n in seen:
+            notes.append(f"dropped duplicate of formula {n}")
+            return ""
+        seen.add(n)
+        return f"KEEPTOKEN{n}"
+
+    text = _KEEP_RE.sub(keep_first, got)
+    for n in expected:
+        if n in seen:
+            continue
+        m = re.search(rf"([A-Za-z]+)\W*KEEPTOKEN{n}(?!\d)", sent)
+        before = m.group(1) if m else None
+        hits = list(re.finditer(rf"\b{re.escape(before)}\b", text)) if before else []
+        if len(hits) != 1:
+            return None
+        pos = hits[0].end()
+        text = text[:pos] + f" KEEPTOKEN{n}" + text[pos:]
+        notes.append(f"formula {n} re-inserted after '{before}'")
+    if not notes or len(notes) > _MAX_TOKEN_REPAIRS:
+        return None
+    return re.sub(r"[ \t]{2,}", " ", text), notes
+
+
 async def _humanize_pass(p, path, blocks, modes, max_words_per_run, auto, diagnosis, problems):
     """One humanize pass over the blocks in *modes* ({index: "whole"|"sentences"})."""
     # plans[i] = list of segments [protected_text, target_index_or_None]
@@ -743,7 +783,15 @@ async def _humanize_pass(p, path, blocks, modes, max_words_per_run, auto, diagno
             para = paras[segs[0][1]]
             found = [int(n) for n in _KEEP_RE.findall(para)]
             if sorted(found) != sorted(locals_[i]):
-                continue
+                # User's rule: don't spend another humanization on a paragraph
+                # where StealthWriter only dropped or doubled a formula or two.
+                fixed = _repair_tokens(segs[0][0], para, sorted(locals_[i]))
+                if fixed is None:
+                    continue
+                para, notes = fixed
+                blocks[i]["math_repaired"] = notes
+                diagnosis.append(f"block {i}: StealthWriter changed {len(notes)} formula "
+                                 f"placeholder(s) -> repaired in place, no re-run ({'; '.join(notes)})")
             new_text = restore(para)
         else:
             # chunks carry no placeholders; math sentences are restored as-is
