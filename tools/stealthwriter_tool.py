@@ -708,6 +708,41 @@ def _dump_score_debug(page: Page):
         pass
 
 
+def _score_is_green(page: Page, score: int) -> bool | None:
+    """True if StealthWriter draws the score in green (the user's pass rule),
+    False if in another colour, None if the colour cannot be read."""
+    try:
+        rgb = page.evaluate(
+            """(score) => {
+                const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+                let n;
+                while ((n = w.nextNode())) {
+                    const t = n.textContent.trim();
+                    if (t.length > 40 || !new RegExp('(^|\\\\D)' + score + '\\\\s*%').test(t)) continue;
+                    let el = n.parentElement;
+                    for (let k = 0; el && k < 4; k++, el = el.parentElement) {
+                        for (const c of [getComputedStyle(el).color,
+                                         getComputedStyle(el).backgroundColor,
+                                         getComputedStyle(el).stroke]) {
+                            const m = (c || '').match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?/);
+                            if (!m || (m[4] !== undefined && parseFloat(m[4]) === 0)) continue;
+                            const [r, g, b] = [+m[1], +m[2], +m[3]];
+                            if (Math.max(r, g, b) - Math.min(r, g, b) > 40) return [r, g, b];
+                        }
+                    }
+                }
+                return null;
+            }""",
+            score,
+        )
+        if not rgb:
+            return None
+        r, g, b = rgb
+        return g > r + 30 and g > b + 10
+    except Exception:
+        return None
+
+
 def _extract_human_score(page: Page) -> int | None:
     """
     Read the human-percentage score shown in StealthWriter's result panel.
@@ -726,14 +761,15 @@ def _extract_human_score(page: Page) -> int | None:
                     const t = n.textContent.trim();
                     if (t) nodes.push(t);
                 }
-                for (let i = 0; i < nodes.length; i++) {
-                    const m = nodes[i].match(/^(\\d+)%$/);
-                    if (m) {
-                        const start = Math.max(0, i - 4);
-                        const nearby = nodes.slice(start, i + 5).join(' ');
-                        if (/human/i.test(nearby)) {
-                            return parseInt(m[1], 10);
-                        }
+                // Exact "92%" nodes first, then nodes like "92% Human" / "Human: 92 %".
+                for (const re of [/^(\\d{1,3})\\s*%$/, /(\\d{1,3})\\s*%/]) {
+                    for (let i = 0; i < nodes.length; i++) {
+                        const m = nodes[i].match(re);
+                        if (!m || nodes[i].length > 40) continue;
+                        const v = parseInt(m[1], 10);
+                        if (v > 100) continue;
+                        const nearby = nodes.slice(Math.max(0, i - 4), i + 5).join(' ');
+                        if (/human/i.test(nearby)) return v;
                     }
                 }
                 return null;
@@ -901,8 +937,10 @@ def _humanize_text_sync(
             _dump_score_debug(page)
             accepted = True
             break
-        if score >= threshold:
-            _report(progress, f"Human score {score}% meets threshold ({threshold}%).")
+        green = _score_is_green(page, score)
+        if green or (green is None and score >= threshold):
+            _report(progress, f"Human score {score}% accepted "
+                              f"({'shown in green' if green else f'threshold {threshold}%'}).")
             accepted = True
             break
         _report(
@@ -920,13 +958,15 @@ def _humanize_text_sync(
     if not accepted:
         # Final score check after the last rehumanize attempt
         final_score = _extract_human_score(page)
-        if final_score is not None and final_score < threshold:
+        last_human_score = final_score
+        if final_score is not None and not _score_is_green(page, final_score):
+            # Keep the humanized text (the original would be pure ChatGPT wording);
+            # the low score is reported to the user through the run diagnosis.
             _report(
                 progress,
-                f"Warning: Human score {final_score}% still below {threshold}% after "
-                f"{max_rehumanize} attempt(s). Using original text.",
+                f"Warning: Human score {final_score}% still not green after "
+                f"{max_rehumanize} 'Humanize More' attempt(s); keeping the humanized text.",
             )
-            result = text  # fall back to original — don't write low-score content
 
     save_browser_state()
     return result
