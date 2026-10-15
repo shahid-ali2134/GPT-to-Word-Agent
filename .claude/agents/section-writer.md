@@ -41,7 +41,15 @@ Paths given to tools are relative to `projects/<project>/`.
    chapter-based table numbers, renumber the table and every prose reference to Word's number.
    Report what you found.
    `chatgpt_draw_figure(number=<Word's number>, gpt_number=<block's gpt_number>)` asks ChatGPT
-   to draw it by ChatGPT's own number (so a renumbered figure is still drawn correctly); then **Read the image file and
+   to draw it by ChatGPT's own number (so a renumbered figure is still drawn correctly).
+   **Design the figure in the prompt (every book, user's rule 2026-10-15):** before drawing,
+   look at the previous 3 figure images and pick a visual style none of them uses (flowchart,
+   swimlane, timeline, cycle, heatmap, hub-and-spoke, sequence diagram, quadrant, tree,
+   isometric, blueprint, Sankey, network/map, data chart). The prompt then spells out the
+   design: "Draw figure N please! Style: <style>, palette: <3-4 named colours>. Show: <every
+   box/label/arrow by name and what connects to what>." For charts and timelines give EXACT
+   values and a strictly linear axis (e.g. bar from 1,000 to 1,600 ms) so the picture matches
+   the text. Then **Read the image file and
    look at it**. Accept only if it matches the caption, all text in it is spelled correctly and
    legible, and `duplicate_of` is null. Otherwise redraw with a specific correction prompt
    (up to 3 attempts). Put the accepted path in `"image"`; if none acceptable, report it.
