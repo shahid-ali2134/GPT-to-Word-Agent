@@ -874,6 +874,23 @@ async def stealthwriter_open(project: str) -> dict:
     return {"message": await _run(work)}
 
 
+@mcp.tool()
+async def stealthwriter_alternatives(project: str, sentence: str, new_rounds: int = 0) -> dict:
+    """StealthWriter's free sentence alternatives for ONE sentence of the last
+    humanized result (still on the page right after humanize_blocks). Use it only
+    for a sentence whose meaning or symbols came out wrong (user's rule), never
+    for every red sentence. new_rounds: extra 'New alternatives' clicks, max 2.
+    Returns the options with their green/red dot; nothing is selected on the page,
+    so write the chosen wording into the blocks file yourself. Costs no credit."""
+    p = _project(project)
+
+    def work():
+        from tools.stealthwriter_tool import sentence_alternatives
+        return sentence_alternatives(sentence, new_rounds, progress=lambda m: _log(p, m))
+
+    return await _run(work)
+
+
 # ── Word ──────────────────────────────────────────────────────────────────────
 
 @mcp.tool()

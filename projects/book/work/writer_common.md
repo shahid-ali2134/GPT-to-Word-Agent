@@ -104,6 +104,10 @@ Before adding a symbol, Grep `work/ch*/c*r*.blocks.json` and `work/ch0[7-9]/r*.b
    formulas back by hand, copy it into "text", set "humanized": true, and delete the two helper
    keys. If there is no candidate (run failed), keep the block's text and fix only clearly odd
    sentences by hand; report it. Never call humanize_blocks again for such a block.
+4d. SENTENCE ALTERNATIVES (user, 2026-10-15): right after humanize_blocks, for a sentence whose
+   meaning or symbols came out WRONG (not merely red), call stealthwriter_alternatives(project,
+   sentence=<its start>, new_rounds=0..2) and copy the best option (prefer green, correct meaning)
+   into the blocks file by hand. Free, but only for wrong sentences; max 2 new rounds, no loops.
 5. Touch-up: keep StealthWriter's text. Fix only clearly odd sentences (garbled, ungrammatical,
    broken technical term, British spelling, factually wrong) with fresh wording. Never paste the
    `original` back. No style polishing. Inline math must stay byte-identical.

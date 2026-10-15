@@ -902,6 +902,54 @@ def _pick_green_alternative(page: Page, max_new: int) -> str:
     return "kept"
 
 
+def sentence_alternatives(sentence: str, new_rounds: int = 0, progress=None) -> dict:
+    """Click one sentence in the current Humanized Result panel and read
+    StealthWriter's free alternatives for it (text + green/red dot). Asks for
+    'New alternatives' up to *new_rounds* times (capped at 2). Picks nothing:
+    the caller puts the chosen wording into the blocks file. Costs no credit."""
+    page = _ensure_browser()
+    new_rounds = max(0, min(int(new_rounds), 2))
+    read_js = """() => {""" + _JS_COLOR + """
+        const dlg = [...document.querySelectorAll('[role=dialog],div')].find(d =>
+            /Choose alternative/.test(d.textContent) && /Option 1/.test(d.textContent)
+            && d.textContent.length < 6000);
+        if (!dlg) return null;
+        const out = [];
+        for (const lab of [...dlg.querySelectorAll('*')].filter(e =>
+                /^(Option \\d|Original)$/.test(e.textContent.trim()) && e.children.length === 0)) {
+            const row = lab.closest('label,button,[role=radio],li') || lab.parentElement.parentElement;
+            const dot = [...(lab.parentElement || row).querySelectorAll('*')].find(x =>
+                x !== lab && x.getBoundingClientRect().width > 0 && x.getBoundingClientRect().width < 14 && hue(x));
+            const text = row.textContent.replace(lab.textContent, '').trim();
+            out.push({label: lab.textContent.trim(), color: dot ? hue(dot) : null, text});
+        }
+        return out;
+    }"""
+    found = []
+    try:
+        page.get_by_text(sentence.strip()[:60], exact=False).first.click(timeout=3_000)
+        page.wait_for_timeout(1_500)
+        opts = page.evaluate(read_js)
+        if opts is None:
+            with open(SW_DOM_DEBUG, "w", encoding="utf-8") as f:
+                f.write(page.content())
+            return {"ok": False, "error": "alternative dialog not found; page saved to " + SW_DOM_DEBUG}
+        found.extend(opts)
+        for _ in range(new_rounds):
+            page.get_by_role("button", name=re.compile(r"new alternatives", re.I)).first.click(timeout=2_000)
+            page.wait_for_timeout(4_000)
+            found.extend(o for o in (page.evaluate(read_js) or []) if o["label"] != "Original")
+        return {"ok": True, "options": found,
+                "note": "green = high human impact; pick one and edit the blocks file by hand"}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"[:300], "options": found}
+    finally:
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+
+
 def _swap_red_sentences(page: Page, original: str, progress=None, max_new: int = 2,
                         max_sentences: int = 15) -> str | None:
     """User's rule (2026-10-15): fix red sentences one by one with StealthWriter's
@@ -1084,7 +1132,9 @@ def _humanize_text_sync(
             )
 
     # Free sentence-level fixes for whatever is still marked red.
-    if cfg.get("swap_red_sentences", True):
+    # Off by default (user, 2026-10-15): only sentences with wrong symbols or
+    # meaning get alternatives, chosen by the writer via sentence_alternatives().
+    if cfg.get("swap_red_sentences", False):
         swapped = _swap_red_sentences(page, text, progress,
                                       max_new=int(cfg.get("max_new_alternatives", 2)))
         if swapped:
