@@ -55,7 +55,9 @@ Work dir: `work/chNN/` (NN = two-digit chapter). Units: `r01`, `r02`, … one pe
 6. Record which section numbers the unit contained: `ledger_update(..., fields={"sections": [...]})`.
 7. Record the unit's StealthWriter human score in the ledger (`human_score`). Do NOT send a
    per-unit AUTO-FIX REPORT (user, 2026-10-15); instead send a short progress update via bookdev_send at
-   every 25% of the chapter (after units r02, r04 and r06 of the 8), and the full summary at 100%. Message the user only for unusual problems or a
+   every 25% of the chapter (after units r02, r04 and r06 of the 8), and the full summary at 100%.
+   Unchanged: automatic detection and fixing in the tools, 🚨 alerts for problems (sent at once),
+   and the ✅ RESOLVED follow-up after each alert. Message the user only for unusual problems or a
    score still below 70% after the 2 "Humanize More" retries. Serious problems are pinged by the
    tools at once. The chapter-complete message lists every unit's human score.
 
