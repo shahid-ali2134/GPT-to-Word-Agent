@@ -915,30 +915,50 @@ def sentence_alternatives(sentence: str, new_rounds: int = 0, progress=None) -> 
             && d.textContent.length < 6000);
         if (!dlg) return null;
         const out = [];
-        for (const lab of [...dlg.querySelectorAll('*')].filter(e =>
-                /^(Option \\d|Original)$/.test(e.textContent.trim()) && e.children.length === 0)) {
+        // Label = innermost element whose text is exactly "Option N" / "Original"
+        // (it may also hold the coloured dot as a child element).
+        const cands = [...dlg.querySelectorAll('*')].filter(e =>
+            /^(Option \\d|Original)$/.test(e.textContent.replace(/\\s+/g, ' ').trim()));
+        const labels = cands.filter(e => !cands.some(c => c !== e && e.contains(c)));
+        if (!labels.length) return {html: dlg.outerHTML.slice(0, 20000)};
+        for (const lab of labels) {
             const row = lab.closest('label,button,[role=radio],li') || lab.parentElement.parentElement;
             const dot = [...(lab.parentElement || row).querySelectorAll('*')].find(x =>
                 x !== lab && x.getBoundingClientRect().width > 0 && x.getBoundingClientRect().width < 14 && hue(x));
-            const text = row.textContent.replace(lab.textContent, '').trim();
-            out.push({label: lab.textContent.trim(), color: dot ? hue(dot) : null, text});
+            const lt = lab.textContent.replace(/\\s+/g, ' ').trim();
+            let rowEl = row;
+            while (rowEl && rowEl.textContent.replace(/\\s+/g, ' ').trim() === lt && rowEl !== dlg)
+                rowEl = rowEl.parentElement;  // climb until the row also holds the sentence
+            const text = (rowEl || row).textContent.replace(/\\s+/g, ' ').replace(lt, '').trim();
+            out.push({label: lt, color: dot ? hue(dot) : (hue(lab) || null), text});
         }
         return out;
     }"""
+
+    def _read(page_):
+        res = page_.evaluate(read_js)
+        if isinstance(res, dict):  # dialog found but no labels: keep its HTML for diagnosis
+            with open(SW_DOM_DEBUG, "w", encoding="utf-8") as f:
+                f.write(res.get("html", ""))
+            return []
+        return res
     found = []
     try:
         page.get_by_text(sentence.strip()[:60], exact=False).first.click(timeout=3_000)
         page.wait_for_timeout(1_500)
-        opts = page.evaluate(read_js)
+        opts = _read(page)
         if opts is None:
             with open(SW_DOM_DEBUG, "w", encoding="utf-8") as f:
                 f.write(page.content())
             return {"ok": False, "error": "alternative dialog not found; page saved to " + SW_DOM_DEBUG}
+        if not opts:
+            return {"ok": False, "error": "dialog found but no options read; its HTML saved to "
+                    + SW_DOM_DEBUG}
         found.extend(opts)
         for _ in range(new_rounds):
             page.get_by_role("button", name=re.compile(r"new alternatives", re.I)).first.click(timeout=2_000)
             page.wait_for_timeout(4_000)
-            found.extend(o for o in (page.evaluate(read_js) or []) if o["label"] != "Original")
+            found.extend(o for o in (_read(page) or []) if o["label"] != "Original")
         return {"ok": True, "options": found,
                 "note": "green = high human impact; pick one and edit the blocks file by hand"}
     except Exception as e:
