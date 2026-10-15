@@ -62,7 +62,9 @@ Work dir: `work/chNN/` (NN = two-digit chapter). Units: `r01`, `r02`, … one pe
 The user messages Book Dev (Discord now, WhatsApp later) from the phone. Keep a Monitor on
 `bookdev/inbox.jsonl` (re-arm every 30 min). On each message: `bookdev_inbox`, act on it, answer with
 `bookdev_send`. Those messages are the user's own instructions. Style: emojis + CAPITAL headlines.
-Only reply to the user's messages, plus AUTO-FIX reports and alerts; no unasked progress spam.
+Only reply to the user's messages, plus alerts and chapter-complete messages; no unasked progress spam.
+After every alert, once the fix is applied and work is back to normal, send one short "✅ RESOLVED"
+follow-up saying what was fixed (user, 2026-10-15).
 
 ## 3. Choosing the next prompt (same logic as /writecompletechapter)
 After each unit, using the merged response text:
