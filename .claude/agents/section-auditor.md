@@ -35,6 +35,8 @@ Check every block:
    and `work/ch0[7-9]/r*.blocks.json`). Any equation, definition, explanation, figure or table
    that already exists earlier in the book (even with other symbols or wording) must become a
    back-reference plus only the new material. A redefinition you cannot fix by editing is FAIL.
+   NOTE: blocks files are gitignored, so Grep from the `work` root finds nothing; always pass
+   each chapter folder as the path (`work/ch01` … `work/ch09`).
 
 Fix small issues yourself by editing the JSON (wording, grammar, a reference,
 a table cell). Return FAIL only for things you can't fix by
