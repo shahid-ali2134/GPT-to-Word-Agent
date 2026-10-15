@@ -112,6 +112,10 @@ def _write_text(doc, block_type: str, text: str, styles: dict):
         r = para.add_run(run["text"])
         wt._apply_run_format(r, cfg, bold=run["bold"], italic=run["italic"])
 
+    # One blank line between the chapter title and its first paragraph (user, 2026-10-16).
+    if block_type == "chapter":
+        doc.add_paragraph()
+
 
 def _write_equation(doc, b: dict, styles: dict):
     cfg = styles.get("body", {})
