@@ -108,13 +108,43 @@ Before adding a symbol, Grep `work/ch*/c*r*.blocks.json` and `work/ch0[7-9]/r*.b
    meaning or symbols came out WRONG (not merely red), call stealthwriter_alternatives(project,
    sentence=<its start>, new_rounds=0..2) and copy the best option (prefer green, correct meaning)
    into the blocks file by hand. Free, but only for wrong sentences; max 2 new rounds, no loops.
-5. Touch-up: keep StealthWriter's text. Fix only clearly odd sentences (garbled, ungrammatical,
-   broken technical term, British spelling, factually wrong) with fresh wording. Never paste the
-   `original` back. No style polishing. Inline math must stay byte-identical.
+5. After humanizing: follow "HUMANIZED TEXT IS FINAL" below. Never paste the `original` back.
+   Inline math must stay byte-identical.
 
-## STYLE RULES (user, 2026-10-15; apply as general rules, after humanizing, to every body block)
-MINIMAL EDITS: every rewording after humanizing reintroduces AI-detectable text. Change only the
-offending punctuation/word and the fewest words around it; never rephrase a whole sentence.
+## HUMANIZED TEXT IS FINAL (user, 2026-10-16; STRICT, every book/session/machine; overrides any older touch-up rule)
+Proven on this book: the final Word text scored 4-38% human on StealthWriter's "Check for AI"
+although every unit scored 83-91% right after humanizing, because the writer and auditor made
+10-12 "minimal" rewrites per unit. Re-humanized Chapter 1 with only the edits below: 72-100%.
+A. EVERYTHING EDITORIAL HAPPENS BEFORE HUMANIZING: condensing, back-references, figure/table
+   reference sentences, and ALL the STYLE RULES below are applied to ChatGPT's text first.
+B. ONE StealthWriter run at a time (the alternatives in step D only exist for the result still on
+   the page). Green 70+; "Humanize More" max 2x, then accept that version (no loops).
+C. Allowed afterwards without asking (mechanical):
+   - em/en dashes -> comma (number ranges "2 to 6", compound words with a hyphen)
+   - contractions/apostrophes expanded (it's -> it is, doesn't -> does not; possessives stay)
+   - first-person words (I, we, our, us, you, your, let us) replaced with the fewest words
+     ("helps us realize" -> "shows", "you can parallelize" -> "can be parallelized")
+   - a lost/moved/misspelled formula placeholder put back (symbols, equations, figures, tables and
+     their numbers never change)
+D. BROKEN-SENTENCE CHECK right after the run, while the result is still on the StealthWriter page.
+   Only three kinds count:
+   - SYMBOL: a definition attached to the wrong symbol, a symbol left undefined, "is the value of ."
+   - MEANING: reversed or wrong technical claim, wrong number, wrong Section/Figure/Table reference
+   - UNREADABLE: cannot be parsed however it is read (non-words, missing words, fragments)
+   NOT counted and left exactly as StealthWriter wrote it: clunky or odd-but-clear wording, mild
+   grammar slips, British spelling, colons/semicolons that StealthWriter produced, word choice.
+E. FIX each one: stealthwriter_alternatives(project, sentence=<its start>, new_rounds=0..2) and copy
+   the option that fixes it (prefer a green dot, never one that lowers the score). Only if no option
+   works: change the fewest words (typically 1-4: swap, insert or delete words), never the whole
+   sentence or its structure. Report every change as old -> new.
+F. AI GATE before Word: stealthwriter_check_ai(project, blocks_file=<unit>) must pass (>= 70). If it
+   fails: undo the hand fixes of step E (keep alternatives), scan again; still failing -> report it
+   (the orchestrator alerts the user). The scan is free (separate quota) but clears the humanizer
+   box, so run it after all alternatives are done.
+
+## STYLE RULES (user, 2026-10-15; apply to the ChatGPT text BEFORE humanizing, see above)
+After humanizing only the mechanical fixes in "HUMANIZED TEXT IS FINAL" C are applied;
+colons/semicolons/odd grammar that StealthWriter itself produced stay.
 - Impersonal, professional voice: no first or second person (I, we, our, us, you, your, let us).
   Rewrite as "This chapter examined…", "Section 8.1.6 showed…", "the reader/practitioner…".
 - No em/en dashes in prose; rebuild the sentence so it reads naturally without them.
@@ -123,10 +153,9 @@ offending punctuation/word and the fewest words around it; never rephrase a whol
   ("because", "and", "while", "such as"). Keep colons only inside math, times or headings.
 - Equation references are positional only ("the equation above", "this equation", "the preceding
   expression"), whichever fits the sentence; never "(24)" or "Equation 24".
-- Fix humanizer sentences that make no sense or have major grammar errors (e.g. a misplaced
-  "however": "Feedback, however, should not necessarily induce a change" when there is no contrast
-  -> "However, feedback does not necessarily require a change in the system."). Leave small
-  grammar quirks and odd-but-clear wording alone; never restore ChatGPT's original.
+- Humanizer sentences that make no sense or have flipped meaning: handled ONLY by
+  "HUMANIZED TEXT IS FINAL" D and E (alternatives first, else fewest words). Leave small grammar
+  quirks, a mid-sentence "however" and odd-but-clear wording alone; never restore ChatGPT's original.
 - Symbols in prose are ALWAYS inline LaTeX ($C_q$, $	au_a$, $x^{2}$) so Word shows italic variables
   with real subscripts/superscripts matching the display equation; never plain "Cq", "τa", "x^2".
 - Every piecewise or multi-line formula is a display equation ($$ ... egin{cases} ... \end{cases} $$),

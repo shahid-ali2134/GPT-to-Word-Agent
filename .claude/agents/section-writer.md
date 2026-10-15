@@ -55,19 +55,30 @@ Paths given to tools are relative to `projects/<project>/`.
    (up to 3 attempts). Put the accepted path in `"image"`; if none acceptable, report it.
    Before humanizing, make sure every figure and table is referenced in the prose (add the
    reference sentence now, so it gets humanized too).
-7. **Humanize ALL body text (user's rule: no ChatGPT text in Word).** `humanize_blocks(blocks_file)`.
-   If it reports `kept_original_blocks` or `not_humanized_blocks`, call it again with
-   `sentence_mode=True`; that humanizes those paragraphs around their math. On a paragraph-count
-   mismatch, map the raw output to paragraphs yourself (restore KEEPTOKENs); never fall back to
-   ChatGPT's text. If StealthWriter fails (quota/login), stop and report.
-8. **Light touch-up only.** Keep StealthWriter's text. Fix only sentences that are clearly odd:
-   ungrammatical, garbled, a broken technical term, British spelling, or a meaning that became
-   factually wrong. Fix them with fresh wording; never paste ChatGPT's `original` back in. Do not
-   polish style, and do not edit sentences that are merely different from the original.
+6b. **Style rules NOW, on ChatGPT's text** (work/writer_common.md "STYLE RULES"): no first person,
+   dashes, contractions, colons/semicolons, numbered equation references; symbols as inline LaTeX.
+   This is the last moment wording may be edited freely.
+7. **Humanize ALL body text (user's rule: no ChatGPT text in Word).** `humanize_blocks(blocks_file)`,
+   ONE StealthWriter run (green 70+, "Humanize More" max 2x). If it reports `kept_original_blocks`
+   or `not_humanized_blocks`, follow writer_common.md 4b/4c. If StealthWriter fails (quota/login),
+   stop and report.
+8. **HUMANIZED TEXT IS FINAL (user, 2026-10-16, STRICT; writer_common.md has the full rule).**
+   a) Mechanical only: dashes, contractions, first-person words (fewest words), formula
+      placeholders put back.
+   b) Read every humanized sentence against `original` for SYMBOL (definition on the wrong
+      symbol), MEANING (reversed/wrong claim, number, reference) and UNREADABLE problems. Nothing
+      else counts: clunky, British spelling, StealthWriter's own colons stay as they are.
+   c) While the result is still on the page: `stealthwriter_alternatives` for each one, copy the
+      option that fixes it (green dot preferred). Only if none works: change the fewest words
+      (1-4), never the sentence structure. Never paste ChatGPT's `original` back.
+   d) AI gate: `stealthwriter_check_ai(project, blocks_file=<unit>)` must pass (>= 70). Failing:
+      undo the hand fixes from c), scan again; still failing -> report it.
 9. **Validate.** `validate_blocks` until zero errors; resolve or justify every warning.
 
 ## Return (short)
 - blocks file path; section numbers this unit contains; whether it contains the Chapter Summary;
   whether it is complete
 - figure and table numbers used (= Word's caption numbers); any numbering issue and its cause
+- StealthWriter human score, `stealthwriter_check_ai` score, and every post-humanize change as
+  old -> new (alternative or hand fix)
 - fixes made (one line each, max 10); anything unresolved

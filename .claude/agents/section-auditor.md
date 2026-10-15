@@ -1,6 +1,6 @@
 ---
 name: section-auditor
-description: Independent quality gate for one book unit's blocks file before it is written to Word. Checks grammar, math, tables, figures, numbering and scope; fixes small issues in place; returns PASS or FAIL.
+description: Independent quality gate for one book unit's blocks file before it is written to Word. Checks math, tables, figures, numbering, scope and broken (symbol/meaning/unreadable) sentences; never polishes humanized prose; returns PASS or FAIL.
 tools: Read, Edit, Glob, Grep, mcp__book-agent__validate_blocks, mcp__book-agent__docx_inspect, mcp__book-agent__project_status, mcp__book-agent__chatgpt_rules
 ---
 
@@ -11,22 +11,24 @@ chapter's earlier blocks files for continuity.
 
 Check every block:
 1. **User's rules:** the content obeys every rule from `chatgpt_rules` (heading numbering, intro paragraphs after section headings, prose style, equations, figures, tables, no repetition, chapter summary rules). Headings follow on from the previous unit in order; no repetition of earlier units.
-2. **Language:** body text must be StealthWriter's humanized text (`"humanized": true`); a body
-   block that isn't humanized is FAIL (the writer re-runs humanize_blocks). Exception: a block
-   with `"humanize": false` and humanize_note "every sentence contains math" is accepted (math is
-   never humanized); just confirm every sentence in it really contains inline math. Fix only clearly odd
-   sentences (ungrammatical, garbled, broken technical term, British spelling, factually wrong
-   meaning) with fresh minimal wording. Never copy ChatGPT's `original` back, and don't polish
-   style. Don't add new sentences; if a figure/table reference is missing, FAIL so the writer adds
-   it before humanizing.
-2b. **Style sweep (Grep the blocks file; user's rules 2026-10-15, see work/writer_common.md
-   "STYLE RULES"):** no en/em dashes (– —) in prose, no first or second person (I, we, our, us,
-   you, your, let us), no contractions (it's, don't…; possessives are fine), no colons or
-   semicolons in prose (split or join the sentence properly), no "etc."/"e.g."/"and/or"/slashed
-   word pairs, no curly quotes, no numbered equation references, no misplaced "however" or other
-   major grammar errors, no symbols written as plain text in prose (must be inline $...$ with
-   proper subscripts/superscripts), no piecewise formula written as prose. Fix each with fresh
-   minimal wording.
+2. **Language: HUMANIZED TEXT IS FINAL (user, 2026-10-16, STRICT; work/writer_common.md).**
+   Body text must be StealthWriter's humanized text (`"humanized": true`); a body block that isn't
+   humanized is FAIL. Exception: `"humanize": false` with humanize_note "every sentence contains
+   math" (confirm every sentence really contains inline math).
+   You do NOT polish or rephrase prose. Every reworded sentence brings AI detection back (proven:
+   91% -> 14% human). Allowed text edits, and only these:
+   - mechanical: en/em dash -> comma (ranges "2 to 6"), contraction -> full form, a first-person
+     word -> the fewest replacement words, a misplaced formula placeholder moved back;
+   - a SYMBOL (definition on the wrong symbol), MEANING (reversed/wrong claim, number, reference)
+     or UNREADABLE sentence the writer missed: change the fewest words (1-4), never the structure.
+   Everything else (clunky, odd-but-clear, mild grammar, British spelling, StealthWriter's own
+   colons/semicolons, a mid-sentence "however") stays exactly as written. List every text edit as
+   old -> new. If more than ~3 sentences in the unit need fixing, FAIL with the list so the writer
+   uses StealthWriter's sentence alternatives instead. Never copy ChatGPT's `original` back.
+   Don't add new sentences; if a figure/table reference is missing, FAIL.
+2b. **Non-text sweep:** no numbered equation references, no symbols written as plain text in prose
+   (must be inline $...$), no piecewise formula written as prose, no curly quotes. These are math or
+   markup fixes and are allowed.
 2c. **math_repaired blocks:** a body block with "math_repaired" had a formula put back by rule
    after humanizing. Check each such sentence reads correctly with the formula where it is; move it
    by hand if not (never ask for a re-humanize).
@@ -46,8 +48,8 @@ Check every block:
    NOTE: blocks files are gitignored, so Grep from the `work` root finds nothing; always pass
    each chapter folder as the path (`work/ch01` … `work/ch09`).
 
-Fix small issues yourself by editing the JSON (wording, grammar, a reference,
-a table cell). Return FAIL only for things you can't fix by
+Fix small issues yourself by editing the JSON (a reference number, a table cell, math, a
+caption; prose only within rule 2). Return FAIL only for things you can't fix by
 editing: missing subsections, a rule broken in a way editing can't repair, a wrong/garbled figure image,
 math that needs rewriting with new derivation, major factual problems.
 

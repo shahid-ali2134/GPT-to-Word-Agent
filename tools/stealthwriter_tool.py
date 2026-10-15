@@ -1182,6 +1182,53 @@ def humanize_text(
     return _humanize_text_sync(text, browser_name, mode_name, progress)
 
 
+def _read_scans_left(page: Page) -> "int | None":
+    try:
+        return page.evaluate("""
+            () => {
+                const m = (document.body.innerText || '').match(/(\\d+)\\s*\\/\\s*\\d+\\s+scans?\\s+left/i);
+                return m ? parseInt(m[1], 10) : null;
+            }
+        """)
+    except Exception:
+        return None
+
+
+def check_for_ai(text: str, timeout_sec: int = 90, progress=None) -> dict:
+    """Paste *text* into the humanizer box and click "Check for AI" (a free scan,
+    separate quota from humanizations). Returns {"score": human %, "verdict"}.
+    The box is cleared of any previous result first, so run this only after the
+    sentence alternatives of the last humanize run are no longer needed."""
+    page = _ensure_browser()
+    _navigate_to_humanizer(page, progress)
+    _reload_humanizer(page, progress)
+    box = _find_humanizer_input(page, timeout_ms=10_000)
+    if box is None:
+        return {"ok": False, "error": "humanizer text box not found"}
+    _paste_text(box, page, text)
+    before = _read_scans_left(page)
+    btn = _find_button(page, r"check for ai", timeout_ms=10_000)
+    if btn is None:
+        return {"ok": False, "error": "'Check for AI' button not found"}
+    btn.click()
+    deadline = time.time() + timeout_sec
+    score = verdict = None
+    while time.time() < deadline:
+        page.wait_for_timeout(1_500)
+        body = page.inner_text("body")
+        m = re.search(r"Scanned with\s+V\d+\s+(\d{1,3})\s*%", body)
+        left = _read_scans_left(page)
+        if m and (before is None or left is None or left < before):
+            score = int(m.group(1))
+            verdict = "AI Detected" if re.search(r"AI Detected|Detected as AI", body) else "Looks Human"
+            break
+    if score is None:
+        return {"ok": False, "error": f"no scan result within {timeout_sec}s"}
+    _report(progress, f"Check for AI: {score}% human ({verdict})")
+    return {"ok": True, "score": score, "verdict": verdict, "words": len(text.split()),
+            "scans_left": _read_scans_left(page)}
+
+
 def open_stealthwriter_for_login(browser_name: str = "chrome", progress=None) -> str:
     """Open the StealthWriter humanizer page and wait for the user to log in.
 

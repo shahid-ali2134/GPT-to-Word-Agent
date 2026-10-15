@@ -46,6 +46,13 @@ Work dir: `work/chNN/` (NN = two-digit chapter). Units: `r01`, `r02`, … one pe
    FAIL → new section-writer for the same unit with the reasons; it must not resend the original
    prompt, it repairs by editing or by asking ChatGPT to rewrite the specific part (max 2 rounds).
    Still FAIL → ledger `issues`, tell the user, continue.
+4a. HUMANIZED TEXT IS FINAL (user, 2026-10-16, STRICT for every book/session/machine; full rule in
+   `projects/<project>/work/writer_common.md`): all editing happens before humanizing; afterwards
+   only mechanical fixes and SYMBOL/MEANING/UNREADABLE sentences (StealthWriter alternatives first,
+   else fewest words). Check the writer's and auditor's old -> new lists: any polishing or
+   rephrasing is a FAIL. Before appending, `stealthwriter_check_ai(project, blocks_file)` must pass
+   (>= 70); if it fails after the writer's retry, 🚨 alert the user with the score and continue only
+   on their answer.
 4b. ZERO REPETITION gate (user's rule): from `projects/<project>/work` run `python dup_check.py
    <blocks>`, `python dup_check_loose.py <blocks>`, `python concept_eq_check.py <blocks>`. Any hit
    involving the NEW unit is fixed first (back-reference instead of repeating), never appended.
@@ -88,6 +95,9 @@ After each unit, using the merged response text:
    something that exists and figure/table numbers match Word's captions (`docx_inspect` counts
    = ledger counts); no numbered equation references anywhere.
    Problems already in Word → tell the user exactly; offer `docx_restore` to a backup + redo.
+2b. AI check of the finished chapter as it is in Word: `python rehumanize_book.py scantext N <docx>`
+   (from `projects/<project>/work`), then `stealthwriter_check_ai(project,
+   text_file="work/rehumanize/chNN.scan.txt")`. Every part must be green (>= 70); report the scores.
 3. `ledger_update(chapter=N, fields={"status": "complete"})`.
 4. 3–5 line summary to the user (sections, figures, tables, equations, open issues),
    then start the next chapter if the request covers it.

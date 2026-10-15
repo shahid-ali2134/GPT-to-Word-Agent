@@ -875,6 +875,47 @@ async def stealthwriter_open(project: str) -> dict:
 
 
 @mcp.tool()
+async def stealthwriter_check_ai(project: str, blocks_file: str = "", text: str = "",
+                                 text_file: str = "", min_score: int = 70) -> dict:
+    """AI gate (user, 2026-10-16): StealthWriter "Check for AI" on the final body
+    text of a blocks file (inline math shown as its symbols, like the reader sees
+    it), or on *text*. Free scan (separate quota from humanizations). passed =
+    score >= min_score. text_file = a plain-text file (paragraphs separated by
+    blank lines) relative to the project folder. Run it AFTER the sentence alternatives are done: it clears
+    the humanizer box. Texts over 4,900 words are scanned in parts."""
+    p = _project(project)
+    if blocks_file:
+        blocks = _load_blocks(_path(p, blocks_file))
+        paras = [blk.INLINE_RE.sub(lambda m: blk.unicode_fallback(m.group("math") or m.group("dmath"))
+                                   if (m.group("math") or m.group("dmath")) else m.group(0), b["text"])
+                 for b in blocks if b.get("type") == "body" and b.get("text")]
+        paras = [re.sub(r"[*$]", "", t) for t in paras]
+    else:
+        if text_file:
+            with open(_path(p, text_file), encoding="utf-8") as f:
+                text = f.read()
+        paras = [x for x in re.split(r"\n\s*\n", text) if x.strip()]
+    parts, cur = [], []
+    for t in paras:
+        if cur and len(" ".join(cur + [t]).split()) > 4900:
+            parts.append(cur)
+            cur = []
+        cur.append(t)
+    if cur:
+        parts.append(cur)
+
+    def work():
+        from tools.stealthwriter_tool import check_for_ai
+        return [check_for_ai("\n\n".join(c), progress=lambda m: _log(p, m)) for c in parts]
+
+    results = await _run(work)
+    scores = [r.get("score") for r in results]
+    ok = all(r.get("ok") for r in results)
+    return {"ok": ok, "scores": scores, "passed": ok and all(s >= min_score for s in scores),
+            "results": results}
+
+
+@mcp.tool()
 async def stealthwriter_alternatives(project: str, sentence: str, new_rounds: int = 0) -> dict:
     """StealthWriter's free sentence alternatives for ONE sentence of the last
     humanized result (still on the page right after humanize_blocks). Use it only

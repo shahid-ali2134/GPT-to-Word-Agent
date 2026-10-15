@@ -104,9 +104,12 @@ pure use of an earlier definition, not a redefinition.
 - Body paragraphs only (never headings, equations, tables, captions), one pass per response.
 - User's rule (2026-10-14): humanize ALL body text and use it. No ChatGPT-worded paragraph goes to
   Word; math-heavy paragraphs are humanized around the math (`sentence_mode=True`).
-- Afterwards adjust only the very odd sentences (garbled, ungrammatical, broken term, British
-  spelling, factually wrong) with fresh wording. Never restore ChatGPT's original phrasing, and
-  don't polish style.
+- HUMANIZED TEXT IS FINAL (user, 2026-10-16; full rule in work/writer_common.md "HUMANIZED TEXT IS
+  FINAL"). All editing and style rules happen on the ChatGPT text BEFORE humanizing. Afterwards only
+  mechanical fixes (dashes, contractions, first-person words) and fixes of SYMBOL / MEANING /
+  UNREADABLE sentences, via StealthWriter's sentence alternatives first, else the fewest words.
+  Then the "Check for AI" gate (stealthwriter_check_ai, >= 70). Proven: 10 to 12 "minimal"
+  rewrites per section dropped final text from 91% to 14% human.
 - Quota exhausted / logged out → stop and tell the user (`stealthwriter_open` helps them log in).
 
 ## Autonomy
