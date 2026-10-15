@@ -98,6 +98,12 @@ Before adding a symbol, Grep `work/ch*/c*r*.blocks.json` and `work/ch0[7-9]/r*.b
    formula placeholders, humanize_blocks now repairs them in place (block gets "math_repaired")
    instead of re-running. Read every math_repaired sentence and move the formula to the right
    spot by hand if needed. Never re-humanize a paragraph just to fix one symbol; fix it manually.
+4c. NEVER A FULL RUN FOR 1-2 LINES (user, 2026-10-15): humanize_blocks no longer starts a second
+   StealthWriter run for fewer than 300 words. A block left with "needs_manual_finish" keeps its
+   first-pass StealthWriter text in "humanized_candidate" (formulas shown as LaTeX): put the
+   formulas back by hand, copy it into "text", set "humanized": true, and delete the two helper
+   keys. If there is no candidate (run failed), keep the block's text and fix only clearly odd
+   sentences by hand; report it. Never call humanize_blocks again for such a block.
 5. Touch-up: keep StealthWriter's text. Fix only clearly odd sentences (garbled, ungrammatical,
    broken technical term, British spelling, factually wrong) with fresh wording. Never paste the
    `original` back. No style polishing. Inline math must stay byte-identical.

@@ -571,6 +571,18 @@ async def humanize_blocks(project: str, blocks_file: str, max_tokens_per_paragra
                 if not blocks[i].get("humanized") and m not in tried[i]}
         if not todo:
             break
+        if _pass > 0:
+            # User's rule: never spend a whole StealthWriter run on a line or two.
+            # Small leftovers keep their first-pass humanized text in
+            # "humanized_candidate" for the writer to finish by hand.
+            words = sum(len(blocks[i]["text"].split()) for i in todo)
+            if words < _MIN_RETRY_WORDS:
+                diagnosis.append(f"blocks {sorted(todo)}: only {words} words left -> no extra run; "
+                                 "finish by hand from humanized_candidate")
+                for i in todo:
+                    blocks[i]["needs_manual_finish"] = True
+                _save_blocks(path, blocks)
+                break
         res = await _humanize_pass(p, path, blocks, todo, max_words_per_run, auto,
                                    diagnosis, problems)
         done += res["done"]
@@ -631,6 +643,7 @@ async def humanize_blocks(project: str, blocks_file: str, max_tokens_per_paragra
 
 
 _MAX_TOKEN_REPAIRS = 2
+_MIN_RETRY_WORDS = 300  # no second StealthWriter run for fewer words than this
 
 
 def _repair_tokens(sent: str, got: str, expected: list[int]):
@@ -795,6 +808,11 @@ async def _humanize_pass(p, path, blocks, modes, max_words_per_run, auto, diagno
                 # where StealthWriter only dropped or doubled a formula or two.
                 fixed = _repair_tokens(segs[0][0], para, sorted(locals_[i]))
                 if fixed is None:
+                    # Keep StealthWriter's text (formulas shown as their LaTeX) so the
+                    # paragraph can be finished by hand instead of re-humanized.
+                    blocks[i]["humanized_candidate"] = _KEEP_RE.sub(
+                        lambda m: spans[int(m.group(1))] if int(m.group(1)) < len(spans)
+                        else "[MISSING FORMULA]", para)
                     continue
                 para, notes = fixed
                 blocks[i]["math_repaired"] = notes
