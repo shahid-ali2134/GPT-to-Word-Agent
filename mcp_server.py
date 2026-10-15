@@ -770,6 +770,14 @@ async def _humanize_pass(p, path, blocks, modes, max_words_per_run, auto, diagno
                 break
             for k, para in zip(batch, out):
                 paras[k] = para
+            try:
+                from tools import stealthwriter_tool
+                sc = stealthwriter_tool.last_human_score
+                diagnosis.append(f"run {n}: human score {sc}%" if sc is not None else
+                                 f"run {n}: human score could not be read (page text saved to "
+                                 "bookdev/sw_score_debug.txt)")
+            except Exception:
+                pass
             break
         if result["quota"]:
             break

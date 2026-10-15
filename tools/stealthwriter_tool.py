@@ -678,6 +678,36 @@ def _wait_for_result_and_copy(page: Page, original_text: str, timeout_sec: int, 
     raise TimeoutError("Timed out waiting for StealthWriter humanized result.")
 
 
+last_human_score: int | None = None
+SCORE_DEBUG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "bookdev", "sw_score_debug.txt")
+
+
+def _dump_score_debug(page: Page):
+    """Save the page's text nodes that look like a score, with their neighbours,
+    so the score reader can be fixed when StealthWriter changes its layout."""
+    try:
+        lines = page.evaluate(
+            """() => {
+                const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+                const nodes = []; let n;
+                while ((n = w.nextNode())) { const t = n.textContent.trim(); if (t) nodes.push(t); }
+                const out = [];
+                nodes.forEach((t, i) => {
+                    if (/%|score|human|detect|AI/i.test(t) && t.length < 80)
+                        out.push(i + ': ' + nodes.slice(Math.max(0, i - 3), i + 4)
+                                 .map(x => x.slice(0, 60)).join(' | '));
+                });
+                return out.slice(0, 80);
+            }"""
+        )
+        os.makedirs(os.path.dirname(SCORE_DEBUG), exist_ok=True)
+        with open(SCORE_DEBUG, "w", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S") + "\n" + "\n".join(lines or []))
+    except Exception:
+        pass
+
+
 def _extract_human_score(page: Page) -> int | None:
     """
     Read the human-percentage score shown in StealthWriter's result panel.
@@ -860,10 +890,16 @@ def _humanize_text_sync(
     result = _wait_for_result_and_copy(page, text, timeout_sec, progress)
     accepted = False
 
+    global last_human_score
+    last_human_score = None
     for attempt in range(max_rehumanize):
         score = _extract_human_score(page)
+        last_human_score = score
         if score is None:
-            accepted = True  # score unreadable — accept humanized result
+            # Accept, but say so and keep the page's score-like text for diagnosis.
+            _report(progress, "Human score could not be read from the page.")
+            _dump_score_debug(page)
+            accepted = True
             break
         if score >= threshold:
             _report(progress, f"Human score {score}% meets threshold ({threshold}%).")
