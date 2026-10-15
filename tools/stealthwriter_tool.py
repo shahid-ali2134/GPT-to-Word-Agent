@@ -718,7 +718,8 @@ def _score_is_green(page: Page, score: int) -> bool | None:
                 let n;
                 while ((n = w.nextNode())) {
                     const t = n.textContent.trim();
-                    if (t.length > 40 || !new RegExp('(^|\\\\D)' + score + '\\\\s*%').test(t)) continue;
+                    if (t.length > 40 || !(t === String(score)
+                            || new RegExp('(^|\\\\D)' + score + '\\\\s*%').test(t))) continue;
                     let el = n.parentElement;
                     for (let k = 0; el && k < 4; k++, el = el.parentElement) {
                         for (const c of [getComputedStyle(el).color,
@@ -761,7 +762,15 @@ def _extract_human_score(page: Page) -> int | None:
                     const t = n.textContent.trim();
                     if (t) nodes.push(t);
                 }
-                // Exact "92%" nodes first, then nodes like "92% Human" / "Human: 92 %".
+                // Current layout (2026-10): "96" | "%" | "human" as separate nodes.
+                for (let i = 0; i + 2 < nodes.length; i++) {
+                    if (/^\\d{1,3}$/.test(nodes[i]) && nodes[i + 1] === '%'
+                            && /human/i.test(nodes[i + 2])) {
+                        const v = parseInt(nodes[i], 10);
+                        if (v <= 100) return v;
+                    }
+                }
+                // Older layouts: "92%" nodes, then "92% Human" / "Human: 92 %".
                 for (const re of [/^(\\d{1,3})\\s*%$/, /(\\d{1,3})\\s*%/]) {
                     for (let i = 0; i < nodes.length; i++) {
                         const m = nodes[i].match(re);
