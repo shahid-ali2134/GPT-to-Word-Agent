@@ -8,9 +8,14 @@ tool bookdev_send. The first person who messages Book Dev becomes its owner;
 messages from anyone else are ignored.
 
 Do not run this together with discord_bot.py (same bot token).
-Run: python bookdev_discord.py
+The book-agent MCP server starts this automatically with every Claude Code
+session in this folder (tools/bookdev.start_listener_watchdog) and passes
+--parent <its PID>; the listener exits when that process is gone.
+Manual run: python bookdev_discord.py
 """
 
+import argparse
+import asyncio
 import json
 import os
 import time
@@ -29,9 +34,22 @@ intents.message_content = True
 client = discord.Client(intents=intents)
 
 
+_parent_pid = None
+
+
+async def _exit_with_parent():
+    import psutil
+    while psutil.pid_exists(_parent_pid):
+        await asyncio.sleep(10)
+    print(f"Parent process {_parent_pid} ended; Book Dev going offline.", flush=True)
+    await client.close()
+
+
 @client.event
 async def on_ready():
     print(f"Book Dev listening as {client.user} (id {client.user.id})", flush=True)
+    if _parent_pid and not getattr(client, "_parent_watch", None):
+        client._parent_watch = asyncio.create_task(_exit_with_parent())
 
 
 @client.event
@@ -62,4 +80,7 @@ async def on_message(message: discord.Message):
 
 
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--parent", type=int, help="exit when this process ends")
+    _parent_pid = ap.parse_args().parent
     client.run(os.environ["DISCORD_TOKEN"])

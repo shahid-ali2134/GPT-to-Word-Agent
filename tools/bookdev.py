@@ -150,3 +150,62 @@ def inbox(mark_read: bool = True) -> list[dict]:
         state["read"] = len(lines)
         write_json(STATE, state)
     return new
+
+
+# ── Listener lifecycle ────────────────────────────────────────────────────────
+# The MCP server starts with every Claude Code session in this folder and keeps
+# the Discord listener running while the session lives: it starts it if none is
+# running and restarts it if it dies. The listener is told the server's PID and
+# exits once that process is gone, so Book Dev only shows online while a session
+# can actually answer. With two sessions open, the survivor's watchdog restarts
+# the listener after the first one closes.
+
+LISTENER_SCRIPT = "bookdev_discord.py"
+LISTENER_LOG = os.path.join(DIR, "discord.log")
+_WATCH_SECONDS = 30
+
+
+def listener_running() -> bool:
+    import psutil
+    for p in psutil.process_iter(["cmdline"]):
+        try:
+            if any(a.endswith(LISTENER_SCRIPT) for a in (p.info["cmdline"] or [])):
+                return True
+        except (psutil.Error, TypeError):
+            continue
+    return False
+
+
+def ensure_listener(parent_pid: int) -> bool:
+    """Start the Discord listener unless one is already running. True if started."""
+    import subprocess
+    import sys
+    if channel() != "discord" or not os.environ.get("DISCORD_TOKEN") or listener_running():
+        return False
+    os.makedirs(DIR, exist_ok=True)
+    log = open(LISTENER_LOG, "a", encoding="utf-8")
+    flags = 0
+    if os.name == "nt":
+        flags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+                 | subprocess.CREATE_NO_WINDOW)
+    subprocess.Popen([sys.executable, "-u", os.path.join(ROOT, LISTENER_SCRIPT),
+                      "--parent", str(parent_pid)],
+                     cwd=ROOT, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                     creationflags=flags, close_fds=True)
+    return True
+
+
+def start_listener_watchdog():
+    """Keep the listener alive for as long as this (MCP server) process runs."""
+    import threading
+    pid = os.getpid()
+
+    def loop():
+        while True:
+            try:
+                ensure_listener(pid)
+            except Exception as e:  # never take the MCP server down over this
+                print(f"[bookdev] listener watchdog: {e}", flush=True)
+            time.sleep(_WATCH_SECONDS)
+
+    threading.Thread(target=loop, name="bookdev-listener", daemon=True).start()

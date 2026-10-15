@@ -10,5 +10,17 @@
     "allow": [
       "mcp__book-agent"
     ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/bookdev_session_hook.py\""
+          }
+        ]
+      }
+    ]
   }
 }

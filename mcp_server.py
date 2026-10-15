@@ -932,4 +932,6 @@ async def _main():
 
 
 if __name__ == "__main__":
+    from tools import bookdev as _bookdev
+    _bookdev.start_listener_watchdog()  # Book Dev goes online with the session
     anyio.run(_main)
