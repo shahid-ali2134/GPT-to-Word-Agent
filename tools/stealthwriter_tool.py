@@ -947,7 +947,23 @@ def sentence_alternatives(sentence: str, new_rounds: int = 0, progress=None) -> 
         return res
     found = []
     try:
-        page.get_by_text(sentence.strip()[:60], exact=False).first.click(timeout=3_000)
+        # The same words are also in the input box (pasted text): click the sentence
+        # span in the Humanized Result panel, i.e. the innermost span holding it.
+        key = sentence.strip()[:60]
+        spans = page.locator("span").filter(has_text=key)
+        target = None
+        for i in range(spans.count() - 1, -1, -1):
+            s = spans.nth(i)
+            try:
+                if s.is_visible() and s.locator("span").filter(has_text=key).count() == 0:
+                    target = s
+                    break
+            except Exception:
+                continue
+        if target is None:
+            return {"ok": False, "error": "sentence not found in the Humanized Result panel "
+                    "(only the last run's result is on the page)"}
+        target.click(timeout=3_000)
         page.wait_for_timeout(1_500)
         opts = _read(page)
         if opts is None:

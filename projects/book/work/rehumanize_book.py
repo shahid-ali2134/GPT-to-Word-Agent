@@ -132,10 +132,13 @@ def patch(n):
     patches, skipped = [], []
     for f in _chunk_files(n):
         for b in json.load(open(f, encoding="utf-8")):
-            if not b.get("humanized"):
+            if b.get("finished_text"):  # candidate with formulas put back (rh_candidates.py)
+                new = b["finished_text"]
+            elif not b.get("humanized"):
                 skipped.append(b["id"])
                 continue
-            new = mechanical(unlock(b["text"]))
+            else:
+                new = mechanical(unlock(b["text"]))
             # a misspelled placeholder is a lost formula: never write it to Word
             if LOST_TOKEN.search(new) or sorted(PH.findall(new)) != sorted(PH.findall(b["export_text"])):
                 print(f"id {b['id']}: formula placeholder lost or misspelled -> fix by hand first")
