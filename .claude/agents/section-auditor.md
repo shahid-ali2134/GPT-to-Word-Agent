@@ -19,9 +19,14 @@ Check every block:
    meaning) with fresh minimal wording. Never copy ChatGPT's `original` back, and don't polish
    style. Don't add new sentences; if a figure/table reference is missing, FAIL so the writer adds
    it before humanizing.
-2b. **Style sweep (Grep the blocks file):** no en/em dashes (– —) in prose, no second person
-   ("you", "your"), no contractions, no "etc."/"e.g."/"and/or"/slashed word pairs, no curly quotes.
-   Fix each with fresh minimal wording.
+2b. **Style sweep (Grep the blocks file; user's rules 2026-10-15, see work/writer_common.md
+   "STYLE RULES"):** no en/em dashes (– —) in prose, no first or second person (I, we, our, us,
+   you, your, let us), no contractions (it's, don't…; possessives are fine), no colons or
+   semicolons in prose (split or join the sentence properly), no "etc."/"e.g."/"and/or"/slashed
+   word pairs, no curly quotes, no numbered equation references, no misplaced "however" or other
+   major grammar errors, no symbols written as plain text in prose (must be inline $...$ with
+   proper subscripts/superscripts), no piecewise formula written as prose. Fix each with fresh
+   minimal wording.
 3. **Math:** each equation correct and well-formed; symbols defined; notation consistent with earlier sections; no equation labels and no numbered equation references (equations are unnumbered).
 4. **Tables:** facts correct, columns consistent, header sensible, caption present, referenced in prose with the right number.
 4b. **Numbering:** figure and table numbers continue exactly from Word's (`validate_blocks` shows them); a gap or repeat is FAIL unless its cause is explained and fixed.

@@ -98,6 +98,26 @@ Before adding a symbol, Grep `work/ch*/c*r*.blocks.json` and `work/ch0[7-9]/r*.b
    broken technical term, British spelling, factually wrong) with fresh wording. Never paste the
    `original` back. No style polishing. Inline math must stay byte-identical.
 
+## STYLE RULES (user, 2026-10-15; apply as general rules, after humanizing, to every body block)
+- Impersonal, professional voice: no first or second person (I, we, our, us, you, your, let us).
+  Rewrite as "This chapter examined…", "Section 8.1.6 showed…", "the reader/practitioner…".
+- No em/en dashes in prose; rebuild the sentence so it reads naturally without them.
+- No contractions: it's -> it is, don't -> do not, can't -> cannot (possessives like "system's" stay).
+- No colons or semicolons in prose: split into two sentences or join with a proper conjunction
+  ("because", "and", "while", "such as"). Keep colons only inside math, times or headings.
+- Equation references are positional only ("the equation above", "this equation", "the preceding
+  expression"), whichever fits the sentence; never "(24)" or "Equation 24".
+- Fix humanizer sentences that make no sense or have major grammar errors (e.g. a misplaced
+  "however": "Feedback, however, should not necessarily induce a change" when there is no contrast
+  -> "However, feedback does not necessarily require a change in the system."). Leave small
+  grammar quirks and odd-but-clear wording alone; never restore ChatGPT's original.
+- Symbols in prose are ALWAYS inline LaTeX ($C_q$, $	au_a$, $x^{2}$) so Word shows italic variables
+  with real subscripts/superscripts matching the display equation; never plain "Cq", "τa", "x^2".
+- Every piecewise or multi-line formula is a display equation ($$ ... egin{cases} ... \end{cases} $$),
+  never prose like "Cq = { 1 if Am ≥ τa ..., 0 otherwise" or "left\{beginmatrix ...".
+- Layout (docx_writer enforces): one blank line before and after each equation; one blank line
+  before each table and after its caption; NO blank line between a table and its caption.
+
 ## Do NOT call docx_append.
 Return (short): blocks file; headings; contains Chapter Summary?; complete?; figure/table numbers +
 captions; display/inline equation counts; humanized/body counts; ChatGPT rule violations; fixes (≤10 lines).

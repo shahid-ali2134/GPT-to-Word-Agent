@@ -138,6 +138,12 @@ def _ensure_browser(browser_name: str = "chrome") -> Page:
         "args": [
             "--disable-blink-features=AutomationControlled",
             "--no-first-run",
+            # Keep working with the screen locked (Win+L) or the window covered:
+            # Chrome otherwise treats every tab as hidden and throttles it.
+            "--disable-features=CalculateNativeWinOcclusion",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-background-timer-throttling",
         ],
     }
 
@@ -155,6 +161,7 @@ def _ensure_browser(browser_name: str = "chrome") -> Page:
     browser = _playwright.chromium.launch(**launch_kwargs)
     _context = browser.new_context(**context_kwargs)
     _grant_default_permissions()
+    _context.on("page", _keep_focused)
     _page = _context.new_page()
 
     # Hide automation fingerprint
@@ -163,6 +170,17 @@ def _ensure_browser(browser_name: str = "chrome") -> Page:
     )
 
     return _page
+
+
+def _keep_focused(page: Page):
+    """Make the page behave as focused even when the screen is locked or another
+    window is in front. The copy buttons (ChatGPT, StealthWriter) write through
+    navigator.clipboard, which Chrome refuses for an unfocused document."""
+    try:
+        cdp = page.context.new_cdp_session(page)
+        cdp.send("Emulation.setFocusEmulationEnabled", {"enabled": True})
+    except Exception as e:
+        print(f"  [Browser] focus emulation unavailable: {e}")
 
 
 def _save_state():
