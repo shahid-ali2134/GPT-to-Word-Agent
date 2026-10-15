@@ -99,6 +99,8 @@ Before adding a symbol, Grep `work/ch*/c*r*.blocks.json` and `work/ch0[7-9]/r*.b
    `original` back. No style polishing. Inline math must stay byte-identical.
 
 ## STYLE RULES (user, 2026-10-15; apply as general rules, after humanizing, to every body block)
+MINIMAL EDITS: every rewording after humanizing reintroduces AI-detectable text. Change only the
+offending punctuation/word and the fewest words around it; never rephrase a whole sentence.
 - Impersonal, professional voice: no first or second person (I, we, our, us, you, your, let us).
   Rewrite as "This chapter examined…", "Section 8.1.6 showed…", "the reader/practitioner…".
 - No em/en dashes in prose; rebuild the sentence so it reads naturally without them.
