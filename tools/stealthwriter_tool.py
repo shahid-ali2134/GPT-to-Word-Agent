@@ -840,6 +840,112 @@ def _try_rehumanize(page: Page, original_text: str, timeout_sec: int, progress=N
         return None
 
 
+SW_DOM_DEBUG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "bookdev", "sw_dom_debug.html")
+
+# JS helpers for the result panel. Sentences are highlighted spans: green = high
+# human impact, red = high AI impact. Clicking one opens "Choose alternative"
+# with Option 1..3 + Original (each with a coloured dot) and "New alternatives".
+_JS_COLOR = """
+const rgbOf = (c) => { const m = (c || '').match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?/);
+    if (!m || (m[4] !== undefined && parseFloat(m[4]) === 0)) return null; return [+m[1], +m[2], +m[3]]; };
+const hue = (el) => { for (const c of [getComputedStyle(el).backgroundColor, getComputedStyle(el).color]) {
+    const v = rgbOf(c); if (!v) continue; const [r, g, b] = v;
+    if (r > g + 40 && r > b + 20) return 'red'; if (g > r + 30 && g > b + 10) return 'green'; }
+    return null; };
+"""
+
+
+def _red_sentences(page: Page) -> list[str]:
+    """Texts of the result-panel sentences StealthWriter marks red (high AI impact)."""
+    return page.evaluate("""() => {""" + _JS_COLOR + """
+        const panel = [...document.querySelectorAll('div,section')].find(d =>
+            /Humanized Result/.test(d.textContent) && /Click sentences to swap/i.test(d.textContent)
+            && d.querySelectorAll('span').length > 0 && d.textContent.length < 60000);
+        if (!panel) return [];
+        const out = [];
+        for (const s of panel.querySelectorAll('span')) {
+            const t = s.textContent.trim();
+            if (t.length > 25 && s.children.length === 0 && hue(s) === 'red') out.push(t);
+        }
+        return [...new Set(out)];
+    }""") or []
+
+
+def _pick_green_alternative(page: Page, max_new: int) -> str:
+    """In an open 'Choose alternative' dialog, select a green-dot option, asking for
+    'New alternatives' at most *max_new* times. Returns 'green', 'kept' or 'none'."""
+    for attempt in range(max_new + 1):
+        picked = page.evaluate("""() => {""" + _JS_COLOR + """
+            const dlg = [...document.querySelectorAll('[role=dialog],div')].find(d =>
+                /Choose alternative/.test(d.textContent) && /Option 1/.test(d.textContent)
+                && d.textContent.length < 6000);
+            if (!dlg) return 'none';
+            const labels = [...dlg.querySelectorAll('*')].filter(e =>
+                /^Option \\d$/.test(e.textContent.trim()) && e.children.length === 0);
+            for (const lab of labels) {
+                const row = lab.closest('label,button,[role=radio],li') || lab.parentElement.parentElement;
+                const dot = [...(lab.parentElement || row).querySelectorAll('*')].find(x =>
+                    x !== lab && x.getBoundingClientRect().width > 0 && x.getBoundingClientRect().width < 14 && hue(x));
+                if (dot && hue(dot) === 'green') { row.click(); return 'green'; }
+            }
+            return 'red';
+        }""")
+        if picked in ("green", "none"):
+            return picked
+        if attempt < max_new:
+            try:
+                page.get_by_role("button", name=re.compile(r"new alternatives", re.I)).first.click(timeout=2_000)
+                page.wait_for_timeout(4_000)
+            except Exception:
+                break
+    return "kept"
+
+
+def _swap_red_sentences(page: Page, original: str, progress=None, max_new: int = 2,
+                        max_sentences: int = 15) -> str | None:
+    """User's rule (2026-10-15): fix red sentences one by one with StealthWriter's
+    free sentence alternatives instead of another humanization. Each sentence gets
+    at most *max_new* 'New alternatives' rounds (no loops). Returns the re-copied
+    result text when anything changed, else None."""
+    try:
+        reds = _red_sentences(page)[:max_sentences]
+    except Exception:
+        reds = []
+    if not reds:
+        return None
+    _report(progress, f"{len(reds)} red sentence(s): trying StealthWriter's sentence alternatives.")
+    swapped = 0
+    for sent in reds:
+        try:
+            page.get_by_text(sent[:60], exact=False).first.click(timeout=2_000)
+            page.wait_for_timeout(1_500)
+            res = _pick_green_alternative(page, max_new)
+            if res == "none":
+                with open(SW_DOM_DEBUG, "w", encoding="utf-8") as f:
+                    f.write(page.content())
+                _report(progress, "Alternative dialog not recognized; page saved for diagnosis.")
+                page.keyboard.press("Escape")
+                break
+            if res == "green":
+                swapped += 1
+            page.wait_for_timeout(500)
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(500)
+        except Exception:
+            try:
+                page.keyboard.press("Escape")
+            except Exception:
+                pass
+    _report(progress, f"Sentence alternatives: {swapped} of {len(reds)} red sentence(s) swapped to green.")
+    if not swapped:
+        return None
+    try:
+        return _copy_result_via_button(page, original)
+    except Exception:
+        return None
+
+
 def _humanize_text_sync(
     text: str,
     browser_name: str = "chrome",
@@ -976,6 +1082,16 @@ def _humanize_text_sync(
                 f"Warning: Human score {final_score}% still not green after "
                 f"{max_rehumanize} 'Humanize More' attempt(s); keeping the humanized text.",
             )
+
+    # Free sentence-level fixes for whatever is still marked red.
+    if cfg.get("swap_red_sentences", True):
+        swapped = _swap_red_sentences(page, text, progress,
+                                      max_new=int(cfg.get("max_new_alternatives", 2)))
+        if swapped:
+            result = swapped
+            score = _extract_human_score(page)
+            if score is not None:
+                last_human_score = score
 
     save_browser_state()
     return result
