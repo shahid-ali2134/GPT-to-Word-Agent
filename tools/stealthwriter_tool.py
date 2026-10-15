@@ -1223,18 +1223,34 @@ def check_for_ai(text: str, timeout_sec: int = 90, progress=None) -> dict:
         return {"ok": False, "error": "humanizer text box not found"}
     _paste_text(box, page, text)
     before = _read_scans_left(page)
+    score_re = re.compile(r"Scanned with\s+V\d+\s+(\d{1,3})\s*%")
+    # The panel keeps showing the PREVIOUS scan's score (it survives a reload) and the
+    # scan counter drops at the click, before the new result arrives. So wait until the
+    # old panel disappears or changes, then until it has been stable for a few seconds.
+    old = score_re.search(page.inner_text("body"))
+    old_txt = old.group(0) if old else None
     btn = _find_button(page, r"check for ai", timeout_ms=10_000)
     if btn is None:
         return {"ok": False, "error": "'Check for AI' button not found"}
     btn.click()
-    deadline = time.time() + timeout_sec
+    t0 = time.time()
+    deadline = t0 + timeout_sec
     score = verdict = None
+    changed, last, stable_since = old_txt is None, None, None
     while time.time() < deadline:
         page.wait_for_timeout(1_500)
         body = page.inner_text("body")
-        m = re.search(r"Scanned with\s+V\d+\s+(\d{1,3})\s*%", body)
+        m = score_re.search(body)
+        cur = m.group(0) if m else None
+        if not changed and (cur != old_txt or time.time() - t0 > 40):
+            changed = True  # new result shown (or same score twice: give up waiting at 40 s)
+        if not changed or cur is None:
+            continue
+        if cur != last:
+            last, stable_since = cur, time.time()
+            continue
         left = _read_scans_left(page)
-        if m and (before is None or left is None or left < before):
+        if time.time() - stable_since >= 4 and (before is None or left is None or left < before):
             score = int(m.group(1))
             verdict = "AI Detected" if re.search(r"AI Detected|Detected as AI", body) else "Looks Human"
             break
