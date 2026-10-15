@@ -833,6 +833,9 @@ def _try_rehumanize(page: Page, original_text: str, timeout_sec: int, progress=N
         btn = page.get_by_role(
             "button", name=re.compile(r"humanize\s+more", re.I)
         ).first
+        if not btn.count():
+            # Split button with an icon: fall back to the visible label text.
+            btn = page.get_by_text(re.compile(r"^\s*Humanize More\s*$")).first
         btn.click(force=True, timeout=2_000)
         page.wait_for_timeout(1_500)
         return _wait_for_result_and_copy(page, original_text, timeout_sec, progress)
