@@ -12,7 +12,14 @@ The user's STRICT rule: humanized text is final. Find ONLY publish-blocking prob
 - B MEANING: reversed or clearly wrong technical claim vs "before" (negation flipped, wrong
   comparison, swapped term, wrong number, wrong Section/Figure/Table/Chapter reference).
 - C UNREADABLE: cannot be parsed however it is read (non-words, misspellings, missing words,
-  fragments without a subject, doubled words).
+  fragments without a subject or verb, label-colon fragments like "Technical metadata: schemas…",
+  doubled words, two sentences run together without punctuation).
+- D STYLE: first or second person, contractions, dashes, or a personal aside StealthWriter invented
+  ("Actually,", "I believe…", "I'm not sure…").
+- Every Section/Figure/Table/Chapter reference in "before" must still be in "now" with the same
+  number (a lost or changed reference is category B).
+Read EVERY paragraph completely, sentence by sentence; a second, independent strict check of the
+finished chapter found ~1 missed problem per 600 words when this list was shorter.
 Ignore everything else: clunky or odd-but-clear wording, mild grammar slips, British spelling,
 colons/semicolons, word choice, him/her. Do not pad.
 

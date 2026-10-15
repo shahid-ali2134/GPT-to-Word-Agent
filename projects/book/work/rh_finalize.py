@@ -39,3 +39,19 @@ for i, t in P.items():
     for s in re.split(r"(?<=[.!?])\s+", t):
         if FIRST_PERSON.search(PH.sub(" ", s)):
             print(f"FIRST PERSON {i} | {s}")
+
+# Automatic safety checks (they caught what reviewers missed on 2026-10-16): every
+# Section/Figure/Table/Chapter reference of the old text must still be there, no placeholder
+# junk, no label-colon fragments ("Technical metadata: schemas…"), no personal asides.
+REF = re.compile(r"\b(?:Figure|Table|Section|Chapter)s?\s+\d+(?:\.\d+)*")
+old = {e["id"]: e["text"] for e in json.load(open(os.path.join(APPLY, f"ch{n}.json"), encoding="utf-8"))}
+for i, t in P.items():
+    lost = set(REF.findall(old.get(i, ""))) - set(REF.findall(t))
+    if lost:
+        print(f"LOST REFERENCE {i}: {sorted(lost)}")
+    for name, pat in [("placeholder junk", r"k\w{0,5}\s*t\w{0,3}n\s*\d|token\s*\d|\$"),
+                      ("label-colon fragment", r"(?:^|\.\s)[A-Z][\w-]+(?: [\w-]+){0,3}:\s"),
+                      ("personal aside", r"\b(Actually|I believe|I think|I'm|to be honest)\b"),
+                      ("doubled word", r"\b(\w{3,})\s+\1\b"), ("dash", r"[—–]|\s--?\s|\w--\w")]:
+        for m in re.finditer(pat, PH.sub(" ", t)):
+            print(f"CHECK {name} {i}: ...{PH.sub(' ', t)[max(0, m.start() - 40):m.end() + 40]}...")

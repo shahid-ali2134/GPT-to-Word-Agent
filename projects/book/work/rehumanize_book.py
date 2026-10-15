@@ -39,7 +39,7 @@ REF = re.compile(
     r"\b(?:Figures?|Tables?|Sections?|Chapters?)\s+\d+(?:\.\d+)*"
     r"(?:(?:,\s*|\s+and\s+|\s+to\s+|\s+or\s+)\d+(?:\.\d+)*)*"
 )
-LOST_TOKEN = re.compile(r"k\w{0,3}p\s*t\w{0,3}n\s*\d", re.I)  # e.g. "KEEEPTOKEN178"
+LOST_TOKEN = re.compile(r"k\w{0,5}\s*t\w{0,3}n\s*\d", re.I)  # "KEEEPTOKEN178", "keeper token 2"
 
 CONTRACTIONS = [
     (r"\b([Cc])an['’]t\b", r"\1annot"), (r"\b([Ww])on['’]t\b", r"\1ill not"),

@@ -8,7 +8,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rehumanize_book import OUT, mechanical, unlock  # noqa: E402
 
 n, chunk, out = sys.argv[1].zfill(2), sys.argv[2], sys.argv[3]
-ex = {e["id"]: e for e in json.load(open(os.path.join(OUT, f"ch{n}.json"), encoding="utf-8"))}
+# a redo chunk was cut from a later export (equation numbering of Word at that time): pass it
+export = sys.argv[4] if len(sys.argv) > 4 else os.path.join(OUT, f"ch{n}.json")
+ex = {e["id"]: e for e in json.load(open(export, encoding="utf-8"))}
 pairs = [{"id": b["id"], "now": mechanical(unlock(b["text"])), "before": b["export_text"],
           "math": ex[b["id"]].get("math")}
          for b in json.load(open(chunk, encoding="utf-8")) if b.get("humanized")]

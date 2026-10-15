@@ -19,38 +19,39 @@ is `config.json -> projects.<project>.word_file_path`. Word must be closed when 
    the word count and the humanizations it needs (about 1 run per 2,400 words), and how many are
    left (shown by every humanize_blocks result; the quota resets daily).
 
-## Per chapter N (in order, from Chapter 1)
-1. `python rehumanize_book.py prep N` → `rehumanize/chNN.cK.blocks.json`, ~2,500 words each (the
-   user's chunk size; pass another size only if the user says so). Only body prose is in them:
-   inline math and Figure/Table/Section/Chapter references are locked, so StealthWriter cannot
-   change symbols or numbers.
-2. For each chunk K, ONE StealthWriter run at a time:
-   a. `humanize_blocks(project, "work/rehumanize/chNN.cK.blocks.json", max_words_per_run=2500,
-      max_tokens_per_paragraph=20)`. Green 70+, "Humanize More" max 2x (built in). Never a full run
-      for one or two leftover lines (built in; such blocks keep their current Word text).
-   b. Broken-sentence check of the chunk (compare each block's `text` with its `export_text`; a
-      subagent may do this read-only): SYMBOL (definition on the wrong symbol: compare the symbols,
-      not the [[Mk]] numbers), MEANING (reversed/wrong claim, number, reference), UNREADABLE.
-      Nothing else counts; clunky, British spelling and StealthWriter's own colons stay.
-   c. While this chunk's result is still on the page: `stealthwriter_alternatives(project,
-      sentence=<start of the sentence>, new_rounds=0..2)` for each finding; copy the option that
-      fixes it into the chunk file (green dot preferred). If none works: change the fewest words
-      (1-4) in the chunk file, never the sentence structure. Keep the $[[Mk]]$ / $Figure N$ spans.
-3. `python rehumanize_book.py patch N` → applies the allowed mechanical fixes (dashes,
-   contractions) and prints first-person hits: fix those in `rehumanize_apply/chNN.patches.json`
-   with the fewest words. It refuses paragraphs whose formula placeholders were lost or misspelled
-   (fix them in the chunk file and patch again).
-4. Back up Word, then `python style_cleanup.py apply <docx> rehumanize_apply --dry-run`, then
-   without `--dry-run`. Every paragraph must be patched, 0 refused (a refusal means Word changed
-   since the export: export again and redo the patch for that chapter).
-5. `docx_health(project)`: 0 problems; equation and figure counts unchanged.
-6. AI gate: `python rehumanize_book.py scantext N <docx>` then `stealthwriter_check_ai(project,
-   text_file="work/rehumanize/chNN.scan.txt")`. Every part must be >= 70. A red part: find the
-   paragraphs that were hand-fixed in it and replace those hand fixes by StealthWriter
-   alternatives; still red → 🚨 alert the user with the score.
-7. Report to the user on Book Dev: run scores, Check-for-AI scores, every post-humanize change as
-   old -> new, and any finding left unfixed. Wait for the user's GO when they asked to review a
-   chapter; otherwise continue with the next chapter.
+## Per chapter N (in order, from Chapter 1) — refined 2026-10-16 on Chapters 1–5
+1. `python rehumanize_book.py prep N 3600` → `rehumanize/chNN.cK.blocks.json` (~3,600 words: one
+   StealthWriter run each; formula placeholders count as words, so 4,900 splits into 2 runs). Only
+   body prose: inline math and Figure/Table/Section/Chapter references are locked.
+2. For each chunk K, ONE run at a time:
+   a. `humanize_blocks(project, "work/rehumanize/chNN.cK.blocks.json", max_words_per_run=4900,
+      max_tokens_per_paragraph=20, auto=False)`. auto=False: no extra paid run for paragraphs whose
+      placeholders got mangled; they are saved as candidates (step 3). Green 70+, "Humanize More"
+      max 2x (built in).
+   b. `python rh_pairs.py N <chunk> rh_review/chNNcK_pairs.json`, then a read-only reviewer
+      subagent with `review_prompt.md` writes `rh_review/chNNcK_fixes.json` (SYMBOL, MEANING incl.
+      lost references, UNREADABLE, STYLE asides; fewest-word fixes).
+   c. While this chunk's result is still on the page (no scan, no other run in between):
+      `stealthwriter_alternatives(project, sentence=<first ~60 chars>)` for each finding; when an
+      option (not "Original") fixes it, use it instead of the hand fix (old = the whole sentence).
+3. Candidates: `python rh_candidates.py dump N rh_review/chNN_cands.json`, a subagent with
+   `candidate_prompt.md` writes `chNN_cands_fixed.json`, then `python rh_candidates.py merge N …`.
+4. `python rh_finalize.py N [first_person_fixes.json]`: patches + all fixes; prints FIRST PERSON,
+   LOST REFERENCE and CHECK lines. Every one is fixed (fewest words) or justified before writing.
+5. Back up Word, `python style_cleanup.py apply <docx> rehumanize_apply` (0 refused), then
+   `docx_health(project)`: 0 problems.
+6. AI gate: `python rehumanize_book.py scantext N <docx>`, split into ~4,000-word parts
+   (`rh_apply_fixes.py` does it), `stealthwriter_check_ai(project, text_file=…)` on each part. Every
+   part >= 70. A red part: `python rh_variant.py N k` (pure StealthWriter text of that part) and
+   scan it. Raw also red → re-humanize that part (export it from Word, one run), review, write back.
+   Raw green → the fixes caused it: replace them with alternatives / fewer words.
+7. STRICT FINAL CHECK (mandatory; the per-chunk reviewers missed ~1 problem per 600 words):
+   export the finished chapter, pair it with the pre-rehumanize backup
+   (rh_review/strict_chNN_pairs.json), a FRESH subagent with `strict_check_prompt.md` → findings,
+   another with `strict_fix_prompt.md` → fixes, `python rh_apply_fixes.py N <fixes> <docx>`, rescan
+   all parts (>= 70; if one drops, undo that part's fixes).
+8. Report to the user on Book Dev: run scores, final Check-for-AI scores per part, counts of fixes
+   by kind, anything left unfixed. Wait for the user's GO when they asked to review a chapter.
 
 ## Never
 - Never edit or rephrase humanized prose beyond the rules above (no polishing, no style fixes).
