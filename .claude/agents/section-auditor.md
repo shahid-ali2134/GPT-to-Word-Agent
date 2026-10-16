@@ -18,10 +18,11 @@ Check every block:
    You do NOT polish or rephrase prose. Every reworded sentence brings AI detection back (proven:
    91% -> 14% human). Allowed text edits, and only these:
    - mechanical: en/em dash -> comma (ranges "2 to 6"), contraction -> full form, a first-person
-     word -> the fewest replacement words, a misplaced formula placeholder moved back;
+     word -> the fewest replacement words, a misplaced formula placeholder moved back, British
+     spelling -> American (organisation -> organization, analyse -> analyze, behaviour -> behavior);
    - a SYMBOL (definition on the wrong symbol), MEANING (reversed/wrong claim, number, reference)
      or UNREADABLE sentence the writer missed: change the fewest words (1-4), never the structure.
-   Everything else (clunky, odd-but-clear, mild grammar, British spelling, StealthWriter's own
+   Everything else (clunky, odd-but-clear, mild grammar, StealthWriter's own
    colons/semicolons, a mid-sentence "however") stays exactly as written. List every text edit as
    old -> new. If more than ~3 sentences in the unit need fixing, FAIL with the list so the writer
    uses StealthWriter's sentence alternatives instead. Never copy ChatGPT's `original` back.

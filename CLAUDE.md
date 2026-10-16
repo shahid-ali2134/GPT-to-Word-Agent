@@ -11,12 +11,14 @@ Every reworded sentence after StealthWriter brings AI detection back (proven: 91
    numbered equation references) happen on ChatGPT's text BEFORE humanizing.
 2. One StealthWriter run at a time; green 70+; "Humanize More" max 2x, then accept (no loops).
 3. Afterwards only: dashes → comma, contractions expanded, first-person words replaced with the
-   fewest words, lost formula placeholders put back. Symbols, equations, figures and tables never
+   fewest words, lost formula placeholders put back, British spelling → American (user, 2026-10-16:
+   organisation → organization, analyse → analyze, behaviour → behavior, modelling → modeling,
+   towards → toward; one word for one word). Symbols, equations, figures and tables never
    change.
 4. Only SYMBOL (definition on the wrong symbol), MEANING (reversed/wrong claim, number, reference)
    and UNREADABLE sentences are fixed: StealthWriter sentence alternatives first
    (`stealthwriter_alternatives`, while the result is on the page), else the fewest words (1-4),
-   never the structure. Clunky, British spelling and odd-but-clear wording stay as they are.
+   never the structure. Clunky and odd-but-clear wording stay as they are.
 5. AI gate before Word: `stealthwriter_check_ai` must be >= 70 (free scans). Red after retry → 🚨
    alert the user.
 6. Report every post-humanize change to the user as old → new.

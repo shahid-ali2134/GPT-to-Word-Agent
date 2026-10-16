@@ -132,7 +132,8 @@ D. BROKEN-SENTENCE CHECK right after the run, while the result is still on the S
    - MEANING: reversed or wrong technical claim, wrong number, wrong Section/Figure/Table reference
    - UNREADABLE: cannot be parsed however it is read (non-words, missing words, fragments)
    NOT counted and left exactly as StealthWriter wrote it: clunky or odd-but-clear wording, mild
-   grammar slips, British spelling, colons/semicolons that StealthWriter produced, word choice.
+   grammar slips, colons/semicolons that StealthWriter produced, word choice. British spelling is
+   NOT left: change it to American (-ise -> -ize, -yse -> -yze, -our -> -or, towards -> toward).
 E. FIX each one: stealthwriter_alternatives(project, sentence=<its start>, new_rounds=0..2) and copy
    the option that fixes it (prefer a green dot, never one that lowers the score). Only if no option
    works: change the fewest words (typically 1-4: swap, insert or delete words), never the whole

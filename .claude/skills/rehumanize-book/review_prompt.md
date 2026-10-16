@@ -20,7 +20,7 @@ The user's STRICT rule: humanized text is final. Find ONLY publish-blocking prob
   number (a lost or changed reference is category B).
 Read EVERY paragraph completely, sentence by sentence; a second, independent strict check of the
 finished chapter found ~1 missed problem per 600 words when this list was shorter.
-Ignore everything else: clunky or odd-but-clear wording, mild grammar slips, British spelling,
+Ignore everything else: clunky or odd-but-clear wording, mild grammar slips,
 colons/semicolons, word choice, him/her. Do not pad.
 
 For each finding draft the MINIMAL fix: change the fewest words (typically 1-4: swap, insert or

@@ -64,10 +64,11 @@ Paths given to tools are relative to `projects/<project>/`.
    stop and report.
 8. **HUMANIZED TEXT IS FINAL (user, 2026-10-16, STRICT; writer_common.md has the full rule).**
    a) Mechanical only: dashes, contractions, first-person words (fewest words), formula
-      placeholders put back.
+      placeholders put back, British spelling -> American (-ise/-isation -> -ize/-ization, -yse -> -yze,
+      -our -> -or, modelling -> modeling, towards -> toward, whilst -> while).
    b) Read every humanized sentence against `original` for SYMBOL (definition on the wrong
       symbol), MEANING (reversed/wrong claim, number, reference) and UNREADABLE problems. Nothing
-      else counts: clunky, British spelling, StealthWriter's own colons stay as they are.
+      else counts: clunky wording, StealthWriter's own colons stay as they are.
    c) While the result is still on the page: `stealthwriter_alternatives` for each one, copy the
       option that fixes it (green dot preferred). Only if none works: change the fewest words
       (1-4), never the sentence structure. Never paste ChatGPT's `original` back.

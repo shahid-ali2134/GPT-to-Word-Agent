@@ -15,7 +15,8 @@ You are the last gate before publication. Read EVERY paragraph of "now" complete
   verb, doubled words, sentence joined without punctuation).
 - D STYLE RULE: first or second person (I, we, our, us, you, your), contractions, em/en dashes, a
   personal aside invented by StealthWriter ("I believe…", "Actually,"). Mechanical only.
-Do NOT report clunky or odd-but-clear wording, mild grammar slips, British spelling, colons or
+- E SPELLING: British spelling (organisation, analyse, behaviour, modelling, towards, whilst) -> American.
+Do NOT report clunky or odd-but-clear wording, mild grammar slips, colons or
 semicolons, or word choice. Do not pad; a precise short list is the goal.
 
 Output: write the JSON file named in the task as a list of
