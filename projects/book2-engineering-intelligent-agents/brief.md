@@ -35,10 +35,18 @@ Set up 2026-10-19 from Book 1's brief: every general rule carries over, Book 1's
   outline → intro → "continue to the next section!" … → conclude prompt → until Chapter Summary.
 - Sections: full depth through X.6. Once a response containing section X.6 (or higher) is complete,
   send the conclude prompt once; from then on sections are concise exactly as the rules say.
-- OPEN (ask the user before chapter 1): Book 2's outline gives exact section titles and 6-9
-  sections per chapter (ch2 has 6, ch3/10/12/15 have 9). Book 1 forced every chapter to 8 sections
-  ending with X.8 Chapter Summary. Decide whether Book 2 keeps the outline's sections exactly
-  (plus a summary) or follows the Book 1 rule.
+- SECTIONS FOLLOW THE OUTLINE EXACTLY (user, 2026-10-19): each chapter has exactly the sections
+  in its `N.txt`, same numbers and titles (6-9 per chapter). Book 1's "always 8 sections" rule does
+  NOT apply. Small alterations are allowed where really needed (e.g. a title that reads badly, a
+  topic that fits better elsewhere); tell the user each one as old → new on Book Dev.
+  Every chapter ends with a "Chapter Summary" section after the last outline section (user,
+  2026-10-19), numbered next (e.g. ch2: 2.7 Chapter Summary).
+- Do not start chapter 1 until the user sends GO on Book Dev (user, 2026-10-19).
+- Rules sent to the chat 2026-10-19, each answered "Understood.": `chatgpt_rules(all)`, then
+  `work/length_rule.md`, then `work/book2_rules.md` (Book 2 overrides: outline sections exactly +
+  Chapter Summary numbered next, length per content section, 5-6 figures, book-wide table numbers,
+  unnumbered equations, style rules). Resend `work/book2_rules.md` if ChatGPT drifts back to the
+  X.8 summary rule or "Equation (N)" references.
 
 ## Word layout (user's decisions for Book 1, 2026-10-14)
 - Every chapter starts on a new page with its chapter title heading (the `chapter` block = Heading 1,
@@ -48,7 +56,7 @@ Set up 2026-10-19 from Book 1's brief: every general rule carries over, Book 1's
   line comes after the caption, never between object and caption.
 - Tables use "Grid Table 4 - Accent N", cycling accents 1-6 through the book.
 - Run all chapters back to back until the user says stop.
-- OPEN: whether the Part I-IV titles appear in Word (e.g. a Part page before chapters 1, 5, 9, 12).
+- No Part pages or Part headings in Word (user, 2026-10-19): chapters run 1-15 like Book 1.
 
 ## Figures per chapter (user's decision, 2026-10-14)
 - Maximum 5–6 figures per chapter, spread across the content sections (roughly one per section,
