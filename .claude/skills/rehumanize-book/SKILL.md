@@ -10,7 +10,7 @@ Why: the finished book scored 4-38% human on StealthWriter's "Check for AI" beca
 edited after humanizing. Chapter 1 redone with this procedure scored 72-100%.
 
 Tools: `projects/<project>/work/rehumanize_book.py` and `style_cleanup.py` (a new project copies
-`projects/book/work/*.py` into its own `work/`). Run them from that `work` folder. The Word file path
+`projects/book1-engineering-intelligent-systems/work/*.py` into its own `work/`). Run them from that `work` folder. The Word file path
 is `config.json -> projects.<project>.word_file_path`. Word must be closed when writing.
 
 ## Once per book

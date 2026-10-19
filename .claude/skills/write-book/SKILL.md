@@ -7,7 +7,7 @@ argument-hint: "[project] [chapter N | chapters N-M | all | continue]"
 # Write book (orchestrator)
 
 You orchestrate; `book-agent` MCP tools do the mechanics; one subagent per
-ChatGPT response does the drafting and checking. Default project: `book`.
+ChatGPT response does the drafting and checking. Default project: `book1-engineering-intelligent-systems` (Book 1). Project folders are named `bookN-<title>`.
 
 The user's rules and prompts come ONLY from `chatgpt_rules` (live from
 agent_core.py). Send them verbatim. Your job is to enforce them and verify

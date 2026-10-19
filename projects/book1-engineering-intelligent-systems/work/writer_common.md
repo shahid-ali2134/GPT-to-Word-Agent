@@ -1,6 +1,6 @@
 # Standing instructions for every section-writer unit (read fully)
 
-Paths are relative to `projects/book/`. Also follow your agent file and `brief.md`.
+Paths are relative to `projects/book1-engineering-intelligent-systems/`. Also follow your agent file and `brief.md`.
 
 ## ChatGPT
 - Send the prompt you were given verbatim. Rules are already in the chat; don't resend them unless
@@ -20,7 +20,7 @@ Paths are relative to `projects/book/`. Also follow your agent file and `brief.m
   even in other notation (e.g. cosine similarity is defined ONLY in 1.5.3; the chain-rule
   next-token product ONLY in 1.3.3; utilization rho = lambda/(k mu) ONLY in 1.6/2.3.5). Use a
   back-reference and add only new material. ChatGPT often re-derives basics: cut them.
-- Before returning, run from projects/book/work: `python dup_check.py <blocks>`,
+- Before returning, run from projects/book1-engineering-intelligent-systems/work: `python dup_check.py <blocks>`,
   `python dup_check_loose.py <blocks>`, `python concept_eq_check.py <blocks>`. Fix every NEW: hit
   (or explain why it is a use, not a redefinition) and report the result.
 
@@ -63,7 +63,7 @@ Before adding a symbol, Grep `work/ch*/c*r*.blocks.json` and `work/ch0[7-9]/r*.b
 
 ## Figures
 - STYLE MUST VARY (user, 2026-10-14): before drawing, Read the previous 3 figure images in
-  `projects/book/figures/` and pick a style from brief.md "Figure styles must vary" that none of
+  `projects/book1-engineering-intelligent-systems/figures/` and pick a style from brief.md "Figure styles must vary" that none of
   them uses. Pass it in the prompt: `chatgpt_draw_figure(number=N, prompt="Draw figure N please!
   Style: <style> (not boxes in layers), palette: <colours>. <what to show>")`. Reject and redraw an
   image whose style matches the previous figures. Report the style used.
@@ -81,7 +81,7 @@ Before adding a symbol, Grep `work/ch*/c*r*.blocks.json` and `work/ch0[7-9]/r*.b
    not_humanized_blocks / problems. sw_prepare.ps1 is then unnecessary. If the result has no
    `diagnosis` key, the old server is still running: follow steps 1–3 below.
 1. Before EVERY humanize_blocks call, run (PowerShell tool):
-   `& "F:\Upwork\Portfolio Projects\AI Agents & LLM Systems\GPT to Word Agent\projects\book\work\sw_prepare.ps1"`
+   `& "F:\Upwork\Portfolio Projects\AI Agents & LLM Systems\GPT to Word Agent\projects\book1-engineering-intelligent-systems\work\sw_prepare.ps1"`
    It brings the StealthWriter window to the front and reloads it (F5). Without the reload a result
    left from the previous run makes the tool copy a half-finished new result -> paragraph-count
    mismatch and a wasted credit. If it prints FRONT_ONLY or NO_WINDOW, call `stealthwriter_open`

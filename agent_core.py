@@ -17,7 +17,7 @@ from tools.word_tool import append_blocks_to_word, has_pending_blocks, recover_p
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(ROOT, "config.json")
 
-DEFAULT_PROJECT = "book"
+DEFAULT_PROJECT = "book1-engineering-intelligent-systems"
 DEFAULT_CHAPTER_NUMBER = 1
 OUTLINE_PROMPT_TEMPLATE = (
     'lets start with chapter {chapter_number} "{chapter_outline}" '
