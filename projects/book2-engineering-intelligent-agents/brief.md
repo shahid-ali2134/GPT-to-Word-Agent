@@ -11,8 +11,8 @@ Set up 2026-10-19 from Book 1's brief: every general rule carries over, Book 1's
   - Full outline from the user: `TM - Engineering Intelligent Agents.txt` (4 Parts, 15 chapters).
   - Chapter outline files: `1.txt` … `15.txt` (split from the full outline, Book 1 format).
     The file's full text is what gets pasted into the outline prompt, exactly as for Book 1.
-  - Word file: `Engineering Intelligent Systems From Data Pipelines to Autonomous AI Agents.docx`
-    (the file keeps Book 1's name, but its title page is Book 2's title).
+  - Word file: `Engineering Intelligent Agents Designing, Orchestrating, Optimizing, and Deploying
+    Agentic AI Systems.docx` (renamed by the user 2026-10-19).
 - Word document + ChatGPT chat: `config.json` → `projects.book2-engineering-intelligent-agents`.
 - Parts (from the outline): Part I Designing Agents (ch 1-4), Part II Orchestrating Agents (ch 5-8),
   Part III Optimizing Agents (ch 9-11), Part IV Deploying Agents (ch 12-15).
