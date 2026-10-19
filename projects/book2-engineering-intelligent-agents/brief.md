@@ -58,6 +58,22 @@ Set up 2026-10-19 from Book 1's brief: every general rule carries over, Book 1's
 - Run all chapters back to back until the user says stop.
 - No Part pages or Part headings in Word (user, 2026-10-19): chapters run 1-15 like Book 1.
 
+## Code listings (user, 2026-10-19)
+- Code that ChatGPT writes is kept, as a visually distinct block: `{"type": "code", "language",
+  "text"}` → docx_writer._write_code (Consolas 9.5 pt, light gray shading, thin border, blank line
+  before and after). Code is NEVER humanized or reworded; the AI check and scans skip it.
+- Check code for correctness like equations (runs as written, names match the prose, no invented
+  APIs presented as real). Keep listings short; prose around them is humanized as usual.
+- Until the MCP server is restarted, run validate_blocks / docx_append / docx_health for units with
+  code through `python work/mcp_cli.py <tool> '<json args>'` (fresh process with the new code).
+
+- PAUSE (user, 2026-10-19): after the first section with code (2.1) is in Word, stop and wait for
+  the user to review it before writing further.
+
+## Template fix (2026-10-19)
+- The Word template had an empty numbered Heading 1 before chapter 1, so Word showed chapter 1 as
+  "2". Removed it (backup `backups/*_before_empty_h1_fix.docx`) and rebuilt the TOC.
+
 ## Figures per chapter (user's decision, 2026-10-14)
 - Maximum 5–6 figures per chapter, spread across the content sections (roughly one per section,
   none in the Chapter Summary). Never 5 in one section.
@@ -122,6 +138,11 @@ or new material) or explained as a pure use of an earlier definition, not a rede
   fixes of SYMBOL / MEANING / UNREADABLE sentences, via StealthWriter's sentence alternatives first,
   else the fewest words. Then the "Check for AI" gate (stealthwriter_check_ai, >= 70).
 - Quota exhausted / logged out → stop and tell the user (`stealthwriter_open` helps them log in).
+
+## Never trust ChatGPT's output (user, 2026-10-19)
+Even with every rule sent and acknowledged, ChatGPT still makes mistakes. Every unit passes ALL
+checks before Word, with no shortcuts: sections vs the outline file, numbering, equations, figures,
+tables, style rules, repetition, audit (section-auditor PASS) and the AI gate.
 
 ## Autonomy
 - Run chapter after chapter without asking. Stop only for: login/quota, Word file locked,

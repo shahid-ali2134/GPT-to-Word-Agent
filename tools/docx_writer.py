@@ -57,6 +57,10 @@ def append_blocks(blocks: list[dict], word_file_path: str) -> str:
             wt._write_word_caption(doc, "Figure", wt._strip_caption_prefix(b.get("caption", ""), "Figure"))
             _spacer(doc)
             needs_com = True
+        elif t == "code":
+            _spacer(doc)
+            _write_code(doc, b["text"])
+            _spacer(doc)
 
     doc.save(word_file_path)
     if needs_com:
@@ -143,6 +147,53 @@ def _write_equation(doc, b: dict, styles: dict):
         r = para.add_run(f"\t({label})")
         r.font.name = cfg.get("font", "Garamond")
         r.font.size = Pt(cfg.get("size_pt", 11))
+
+
+CODE_FONT = "Consolas"
+CODE_SIZE_PT = 9.5
+CODE_FILL = "F2F2F2"
+CODE_BORDER = "A6A6A6"
+
+
+def _write_code(doc, code: str):
+    """A code listing: one paragraph per line in a monospace font, inside a
+    single gray-shaded box (Word joins the borders of consecutive paragraphs
+    that share the same border settings)."""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    for line in code.expandtabs(4).split("\n"):
+        para = doc.add_paragraph()
+        pf = para.paragraph_format
+        pf.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        pf.first_line_indent = Pt(0)
+        pf.left_indent = Pt(6)
+        pf.right_indent = Pt(6)
+        pf.space_before = Pt(0)
+        pf.space_after = Pt(0)
+        pf.line_spacing = 1.0
+        pf.keep_together = True
+        ppr = para._p.get_or_add_pPr()
+        borders = OxmlElement("w:pBdr")
+        for side in ("top", "left", "bottom", "right"):
+            el = OxmlElement(f"w:{side}")
+            el.set(qn("w:val"), "single")
+            el.set(qn("w:sz"), "4")
+            el.set(qn("w:space"), "4")
+            el.set(qn("w:color"), CODE_BORDER)
+            borders.append(el)
+        ppr.append(borders)
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"), CODE_FILL)
+        ppr.append(shd)
+        # Leading spaces are kept as typed (python-docx writes xml:space="preserve").
+        r = para.add_run(line if line else " ")
+        r.font.name = CODE_FONT
+        r.font.size = Pt(CODE_SIZE_PT)
+        r._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), CODE_FONT)
+        r._element.rPr.rFonts.set(qn("w:cs"), CODE_FONT)
 
 
 # ── Read-back ─────────────────────────────────────────────────────────────────

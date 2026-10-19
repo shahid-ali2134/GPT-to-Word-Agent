@@ -69,6 +69,10 @@ def kind(el):
         return "equation"
     if not text and not has_math:
         return "blank"
+    # Code listings (docx_writer._write_code): every run in Consolas; never humanized.
+    fonts = [rf.get(W + "ascii") for rf in el.iter(W + "rFonts")]
+    if fonts and all(f == "Consolas" for f in fonts):
+        return "code"
     return "body"
 
 

@@ -34,7 +34,9 @@ def check(path: str, fix: bool = True) -> dict:
     nfig = sum(1 for c in caps if c.startswith("Figure"))
     ntab = sum(1 for c in caps if c.startswith("Table"))
 
-    body = "\n".join(p.text for p in paras if style(p) != "Caption")
+    # Code listings (docx_writer._write_code, Consolas) keep $, **, # and \n as typed.
+    is_code = lambda p: bool(p.runs) and all(r.font.name == "Consolas" for r in p.runs)
+    body = "\n".join(p.text for p in paras if style(p) != "Caption" and not is_code(p))
     for m in re.finditer(r"\b(?:Equation|Eq\.)\s*\(?\d+", body):
         problems.append(f"numbered equation reference: {body[max(0, m.start() - 40):m.end() + 10]!r}")
     for m in re.finditer(r"\bFigures?\s+(\d+)", body):

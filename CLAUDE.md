@@ -23,6 +23,10 @@ Every reworded sentence after StealthWriter brings AI detection back (proven: 91
    alert the user.
 6. Report every post-humanize change to the user as old → new.
 
+## CODE LISTINGS (user, 2026-10-19; every book)
+ChatGPT's code goes to Word as a `code` block (Consolas, gray shaded box, thin border) exactly as
+written: never humanized, reworded or AI-scanned. Checked for correctness like equations.
+
 ## Repo notes
 - `.git` belongs to another Windows user: run git as
   `git -c "safe.directory=F:/Upwork/Portfolio Projects/AI Agents & LLM Systems/GPT to Word Agent" ...`.

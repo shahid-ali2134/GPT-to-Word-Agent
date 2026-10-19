@@ -71,6 +71,17 @@ Before adding a symbol, Grep `work/ch*/*.blocks.json` (all units already written
   duplicate; up to 3 redraws with specific corrections.
 - Every figure/table must be referenced in prose; add the reference sentence BEFORE humanizing.
 
+## Code listings (user, 2026-10-19; approved look: gray shaded box, thin border, Consolas)
+- Keep ChatGPT's code as its own block: {"type": "code", "language": "python", "text": "<exact
+  code, newlines and indentation kept>"}. markdown_to_blocks turns ``` fences into these blocks.
+- NEVER humanize or reword code (humanize_blocks, the AI check and the chapter scans skip it).
+- Check code like equations: valid syntax, names match the prose, no secrets (env variables), no
+  invented APIs (a real SDK call must exist, else use a clearly generic helper such as
+  call_model and say so). Short listings (<= 30 lines, lines <= 90 chars). Refer to them
+  positionally ("the listing above"); no "Listing N" numbers.
+- Until the MCP server is restarted: build blocks with the new tools.blocks in a fresh Python
+  process and validate/append through `python mcp_cli.py <tool> '<json>'` (work folder).
+
 ## Humanize (user's rule: no ChatGPT-worded text in Word)
 0. AUTO MODE (after the MCP server restart that loads it; the result then has a `diagnosis` key):
    humanize_blocks(blocks_file, max_words_per_run=4900) diagnoses and fixes small failures itself:

@@ -77,6 +77,12 @@ def main():
                     sh = " ".join(w[k:k + SHINGLE])
                     if sh.count("math") < 3:
                         shingles[sh].add(where)
+            elif t == "code":
+                # Code lines (not prose shingles): a later listing must not repeat earlier code.
+                for ln in (b.get("text") or "").split("\n"):
+                    ln = re.sub(r"\s+", " ", ln).strip()
+                    if len(ln) > 25 and not ln.startswith("#"):
+                        shingles["code: " + ln].add(where)
             elif t == "figure":
                 img = b.get("image") or b.get("path") or ""
                 if img and os.path.exists(img):

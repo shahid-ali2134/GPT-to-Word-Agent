@@ -12,6 +12,7 @@ edit before anything touches the Word document:
   {"type": "equation",  "latex": "E = mc^2", "label": "7.3"}      # label optional
   {"type": "table",     "caption": "Title", "rows": [["H1","H2"],["a","b"]]}
   {"type": "figure",    "number": 12, "caption": "Sentence.", "image": "path.png"}
+  {"type": "code",      "language": "python", "text": "def f():\n    return 1"}  # never humanized
 
 This module converts ChatGPT markdown into blocks and validates blocks.
 It makes no judgement calls about content: it reports, Claude decides.
@@ -24,7 +25,7 @@ from tools.parser import _latex_to_unicode
 from tools.word_tool import _latex_to_omml, _normalize_stripped_latex
 
 TEXT_TYPES = ("chapter", "heading2", "heading3", "body", "list_item")
-ALL_TYPES = TEXT_TYPES + ("equation", "table", "figure")
+ALL_TYPES = TEXT_TYPES + ("equation", "table", "figure", "code")
 
 DONE_MARKER = "[SECTION_WORKFLOW_COMPLETE]"
 
@@ -92,7 +93,25 @@ def markdown_to_blocks(md: str) -> list[dict]:
     """Convert ChatGPT markdown (as extracted by browser_tool) into blocks."""
     md = md.replace("\r\n", "\n").replace(DONE_MARKER, "")
     blocks: list[dict] = []
+    # Fenced code keeps its blank lines and indentation, so it is cut out
+    # before the text is split into paragraph groups.
+    parts = _CODE_FENCE_RE.split(md.strip())
+    for i in range(0, len(parts), 3):
+        blocks.extend(_prose_to_blocks(parts[i]))
+        if i + 2 < len(parts) and parts[i + 2].strip():
+            blocks.append({"type": "code", "language": (parts[i + 1] or "").strip(),
+                           "text": parts[i + 2].strip("\n")})
+    return blocks
+
+
+_CODE_FENCE_RE = re.compile(r"^[ \t]*```[ \t]*([\w+#.-]*)[ \t]*\n(.*?)\n[ \t]*```[ \t]*$", re.M | re.S)
+
+
+def _prose_to_blocks(md: str) -> list[dict]:
+    blocks: list[dict] = []
     pending_table_caption: tuple[int, str] | None = None
+    if not md.strip():
+        return blocks
 
     for group in re.split(r"\n\s*\n", md.strip()):
         lines = [ln.rstrip() for ln in group.split("\n") if ln.strip()]
@@ -310,6 +329,8 @@ def validate_blocks(blocks: list[dict]) -> dict:
         # "\frac") is read as a control character plus the rest of the word.
         for key in ("text", "latex", "caption"):
             val = b.get(key)
+            if t == "code" and key == "text":
+                continue  # code keeps its own tabs and line breaks
             if isinstance(val, str) and re.search(r"[\x00-\x08\x0b-\x1f\t]", val):
                 errors.append(f"{where}: control character in {key} (broken JSON escape such as "
                               f"\\rho or \\theta written with a single backslash?)")
@@ -367,6 +388,17 @@ def validate_blocks(blocks: list[dict]) -> dict:
                 for c in r:
                     if "$" in str(c) or "**" in str(c):
                         warnings.append(f"{where} (table {cap[:40]!r}): cell has markdown/LaTeX that Word will show literally: {str(c)[:60]!r}")
+
+        elif t == "code":
+            code = b.get("text") or ""
+            if not code.strip():
+                errors.append(f"{where} (code): empty code")
+            elif "```" in code:
+                errors.append(f"{where} (code): leftover ``` fence inside the code")
+            elif re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", code):
+                errors.append(f"{where} (code): control character in code")
+            if any(len(ln) > 90 for ln in code.split("\n")):
+                warnings.append(f"{where} (code): line longer than 90 characters will wrap in Word")
 
         elif t == "figure":
             num = b.get("number")
