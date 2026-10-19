@@ -48,8 +48,8 @@ async def _exit_with_parent():
 @client.event
 async def on_ready():
     print(f"Nexus listening as {client.user} (id {client.user.id})", flush=True)
-    # Status under the name (user, 2026-10-19: "Nexus (The Book Writer)").
-    await client.change_presence(activity=discord.CustomActivity(name="📚 Writing books, chapter by chapter"))
+    # Status under the name "Nexus" (user, 2026-10-19).
+    await client.change_presence(activity=discord.CustomActivity(name="The Book Writer"))
     if _parent_pid and not getattr(client, "_parent_watch", None):
         client._parent_watch = asyncio.create_task(_exit_with_parent())
 
