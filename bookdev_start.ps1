@@ -1,4 +1,4 @@
-# Start "Book Dev": the WhatsApp webhook plus a cloudflared tunnel to it.
+# Start "Nexus": the WhatsApp webhook plus a cloudflared tunnel to it.
 # Prints the URL to paste into Twilio's WhatsApp sandbox settings
 # ("When a message comes in", method POST). The quick-tunnel URL changes each
 # time this script runs, so paste it again after every restart.

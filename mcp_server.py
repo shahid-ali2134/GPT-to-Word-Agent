@@ -129,7 +129,7 @@ def _ends_cleanly(text: str) -> bool:
     return bool(lines) and bool(re.search(r"[.!?)\]\"'”’`$|]$|^#", lines[-1]))
 
 
-# ── Auto-diagnose / auto-fix reporting (Book Dev) ─────────────────────────────
+# ── Auto-diagnose / auto-fix reporting (Nexus) ─────────────────────────────
 # Small fixes are recorded and sent as one AUTO-FIX REPORT per unit
 # (bookdev_report); serious problems ping the owner at once. Messaging must
 # never break a tool, so failures here are only logged.
@@ -831,13 +831,13 @@ async def _humanize_pass(p, path, blocks, modes, max_words_per_run, auto, diagno
     return result
 
 
-# ── Book Dev (Discord now, WhatsApp later) ────────────────────────────────────
+# ── Nexus (Discord now, WhatsApp later) ────────────────────────────────────
 
 @mcp.tool()
 async def bookdev_send(message: str) -> dict:
-    """Book Dev: reply to the owner on Discord (default) or WhatsApp
+    """Nexus: reply to the owner on Discord (default) or WhatsApp
     (BOOKDEV_CHANNEL=whatsapp in .env). Long text is split into several
-    messages. Use it to answer the owner's Book Dev messages and for stop
+    messages. Use it to answer the owner's Nexus messages and for stop
     conditions (quota, login, locked Word file)."""
     from tools import bookdev
     return await asyncio.to_thread(bookdev.send, message)  # not on the browser/Word thread
@@ -845,7 +845,7 @@ async def bookdev_send(message: str) -> dict:
 
 @mcp.tool()
 async def bookdev_report(title: str) -> dict:
-    """Book Dev: send all automatic fixes recorded since the last report as one
+    """Nexus: send all automatic fixes recorded since the last report as one
     "🛠️ AUTO-FIX REPORT" message (call after each unit is written to Word).
     Sends nothing when there were no fixes. Serious problems are pinged at once
     by the tools themselves."""
@@ -855,7 +855,7 @@ async def bookdev_report(title: str) -> dict:
 
 @mcp.tool()
 async def bookdev_inbox(mark_read: bool = True) -> dict:
-    """Book Dev: the owner's messages not yet read, oldest first. The listener
+    """Nexus: the owner's messages not yet read, oldest first. The listener
     must be running (python bookdev_discord.py, or the WhatsApp webhook)."""
     from tools import bookdev
     msgs = bookdev.inbox(mark_read)
@@ -1026,7 +1026,7 @@ async def docx_health(project: str) -> dict:
     numbering, Figure/Table references past the last caption, numbered equation
     references, leftover LaTeX/markdown/ChatGPT text, duplicate headings.
     Auto-fixes chapters that don't start on a new page (backup first).
-    Problems are pinged to the user on Book Dev."""
+    Problems are pinged to the user on Nexus."""
     from tools import doc_health
     p = _project(project)
     word = p["word_file_path"]
@@ -1065,5 +1065,5 @@ async def _main():
 
 if __name__ == "__main__":
     from tools import bookdev as _bookdev
-    _bookdev.start_listener_watchdog()  # Book Dev goes online with the session
+    _bookdev.start_listener_watchdog()  # Nexus goes online with the session
     anyio.run(_main)

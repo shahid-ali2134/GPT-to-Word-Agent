@@ -1,5 +1,5 @@
 """
-"Book Dev": message the book workflow from your phone.
+"Nexus": message the book workflow from your phone.
 
 Incoming messages from either listener (bookdev_discord.py, or the Twilio
 WhatsApp webhook bookdev_webhook.py) are appended to bookdev/inbox.jsonl.
@@ -74,7 +74,7 @@ def _send_discord(text: str) -> dict:
     if not token:
         return {"ok": False, "errors": ["DISCORD_TOKEN missing in .env"]}
     if not ch:
-        return {"ok": False, "errors": ["No Discord channel yet: message Book Dev once first."]}
+        return {"ok": False, "errors": ["No Discord channel yet: message Nexus once first."]}
     sent, errors = 0, []
     for part in chunks(text, _DISCORD_CHUNK):
         r = requests.post(f"https://discord.com/api/v10/channels/{ch}/messages", timeout=30,
@@ -156,7 +156,7 @@ def inbox(mark_read: bool = True) -> list[dict]:
 # The MCP server starts with every Claude Code session in this folder and keeps
 # the Discord listener running while the session lives: it starts it if none is
 # running and restarts it if it dies. The listener is told the server's PID and
-# exits once that process is gone, so Book Dev only shows online while a session
+# exits once that process is gone, so Nexus only shows online while a session
 # can actually answer. With two sessions open, the survivor's watchdog restarts
 # the listener after the first one closes.
 

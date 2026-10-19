@@ -1,5 +1,5 @@
 """
-"Book Dev" WhatsApp webhook: receives Twilio's incoming-message webhook and
+"Nexus" WhatsApp webhook: receives Twilio's incoming-message webhook and
 stores messages from the owner's number in bookdev/inbox.jsonl, where the
 Claude Code session running the book picks them up and replies through the
 book-agent MCP tool whatsapp_send.
@@ -22,7 +22,7 @@ from tools.bookdev import append as _append
 from tools.whatsapp_tool import config
 
 PORT = 8787
-ACK = "Book Dev got it. Working on it."
+ACK = "Nexus got it. Working on it."
 
 app = Flask(__name__)
 
@@ -63,7 +63,7 @@ def whatsapp():
 
 @app.get("/health")
 def health():
-    return "Book Dev webhook is running."
+    return "Nexus webhook is running."
 
 
 if __name__ == "__main__":

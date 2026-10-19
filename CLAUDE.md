@@ -2,7 +2,7 @@
 
 Books are written by the `write-book` skill (ChatGPT drafts → StealthWriter humanizes → Word) and
 re-humanized by the `rehumanize-book` skill. Project rules: `projects/<project>/brief.md` and
-`projects/<project>/work/writer_common.md`. The user talks to the session only through Book Dev
+`projects/<project>/work/writer_common.md`. The user talks to the session only through Nexus
 (Discord): answer with `bookdev_send`.
 
 ## HUMANIZED TEXT IS FINAL (user, 2026-10-16; STRICT, every book, session and machine)

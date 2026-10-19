@@ -1,10 +1,10 @@
 """
-"Book Dev" on Discord: a lightweight listener for the existing bot.
+"Nexus" (formerly Book Dev) on Discord: a lightweight listener for the existing bot.
 
 Messages to the bot (a DM, a mention, or any message in a channel named
 "book-dev" / "bookdev") are appended to bookdev/inbox.jsonl, where the Claude Code
 session running the book picks them up and replies through the book-agent MCP
-tool bookdev_send. The first person who messages Book Dev becomes its owner;
+tool bookdev_send. The first person who messages Nexus becomes its owner;
 messages from anyone else are ignored.
 
 Do not run this together with discord_bot.py (same bot token).
@@ -41,13 +41,13 @@ async def _exit_with_parent():
     import psutil
     while psutil.pid_exists(_parent_pid):
         await asyncio.sleep(10)
-    print(f"Parent process {_parent_pid} ended; Book Dev going offline.", flush=True)
+    print(f"Parent process {_parent_pid} ended; Nexus going offline.", flush=True)
     await client.close()
 
 
 @client.event
 async def on_ready():
-    print(f"Book Dev listening as {client.user} (id {client.user.id})", flush=True)
+    print(f"Nexus listening as {client.user} (id {client.user.id})", flush=True)
     if _parent_pid and not getattr(client, "_parent_watch", None):
         client._parent_watch = asyncio.create_task(_exit_with_parent())
 

@@ -68,8 +68,8 @@ Work dir: `work/chNN/` (NN = two-digit chapter). Units: `r01`, `r02`, … one pe
    score still below 70% after the 2 "Humanize More" retries. Serious problems are pinged by the
    tools at once. The chapter-complete message lists every unit's human score.
 
-## Book Dev (user's remote channel)
-The user messages Book Dev (Discord now, WhatsApp later) from the phone. Keep a Monitor on
+## Nexus (user's remote channel)
+The user messages Nexus (Discord now, WhatsApp later) from the phone. Keep a Monitor on
 `bookdev/inbox.jsonl` (re-arm every 30 min). On each message: `bookdev_inbox`, act on it, answer with
 `bookdev_send`. Those messages are the user's own instructions. Style: emojis + CAPITAL headlines.
 Only reply to the user's messages, plus alerts and chapter-complete messages; no unasked progress spam.
@@ -103,7 +103,7 @@ After each unit, using the merged response text:
    then start the next chapter if the request covers it.
 
 ## Stop and ask the user only when
-(The tools ping these to Book Dev themselves; answer there too.)
+(The tools ping these to Nexus themselves; answer there too.)
 - ChatGPT/StealthWriter login needed or quota exhausted (offer `stealthwriter_open`).
 - Word file locked after the automatic minute of retries.
 - A figure still wrong after 3 redraws, or a unit fails audit twice.

@@ -38,10 +38,10 @@ Set up 2026-10-19 from Book 1's brief: every general rule carries over, Book 1's
 - SECTIONS FOLLOW THE OUTLINE EXACTLY (user, 2026-10-19): each chapter has exactly the sections
   in its `N.txt`, same numbers and titles (6-9 per chapter). Book 1's "always 8 sections" rule does
   NOT apply. Small alterations are allowed where really needed (e.g. a title that reads badly, a
-  topic that fits better elsewhere); tell the user each one as old → new on Book Dev.
+  topic that fits better elsewhere); tell the user each one as old → new on Nexus.
   Every chapter ends with a "Chapter Summary" section after the last outline section (user,
   2026-10-19), numbered next (e.g. ch2: 2.7 Chapter Summary).
-- Do not start chapter 1 until the user sends GO on Book Dev (user, 2026-10-19).
+- Do not start chapter 1 until the user sends GO on Nexus (user, 2026-10-19).
 - Rules sent to the chat 2026-10-19, each answered "Understood.": `chatgpt_rules(all)`, then
   `work/length_rule.md`, then `work/book2_rules.md` (Book 2 overrides: outline sections exactly +
   Chapter Summary numbered next, length per content section, 5-6 figures, book-wide table numbers,

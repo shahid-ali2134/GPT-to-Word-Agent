@@ -1,5 +1,5 @@
 """
-WhatsApp link for "Book Dev" through Twilio's WhatsApp API.
+WhatsApp link for "Nexus" through Twilio's WhatsApp API.
 
 Incoming: bookdev_webhook.py receives Twilio's webhook and appends each message
 from the owner's number to bookdev/inbox.jsonl.

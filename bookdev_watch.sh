@@ -1,5 +1,5 @@
 #!/bin/sh
-# Prints one "NEW_MSG: {...}" line per new Book Dev message in bookdev/inbox.jsonl.
+# Prints one "NEW_MSG: {...}" line per new Nexus message in bookdev/inbox.jsonl.
 # Claude runs this under its Monitor tool so Discord messages reach the session.
 cd "$(dirname "$0")/bookdev" || exit 1
 touch inbox.jsonl

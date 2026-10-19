@@ -50,7 +50,7 @@ is `config.json -> projects.<project>.word_file_path`. Word must be closed when 
    (rh_review/strict_chNN_pairs.json), a FRESH subagent with `strict_check_prompt.md` → findings,
    another with `strict_fix_prompt.md` → fixes, `python rh_apply_fixes.py N <fixes> <docx>`, rescan
    all parts (>= 70; if one drops, undo that part's fixes).
-8. Report to the user on Book Dev: run scores, final Check-for-AI scores per part, counts of fixes
+8. Report to the user on Nexus: run scores, final Check-for-AI scores per part, counts of fixes
    by kind, anything left unfixed. Wait for the user's GO when they asked to review a chapter.
 
 ## Never
