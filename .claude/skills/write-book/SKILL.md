@@ -51,8 +51,9 @@ Work dir: `work/chNN/` (NN = two-digit chapter). Units: `r01`, `r02`, … one pe
    only mechanical fixes and SYMBOL/MEANING/UNREADABLE sentences (StealthWriter alternatives first,
    else fewest words). Check the writer's and auditor's old -> new lists: any polishing or
    rephrasing is a FAIL. Before appending, `stealthwriter_check_ai(project, blocks_file)` must pass
-   (>= 70); if it fails after the writer's retry, 🚨 alert the user with the score and continue only
-   on their answer.
+   (>= 70); if it fails, do not ask (user, 2026-10-20): run "Humanize More" on the unit's current
+   humanized body text automatically (max 2 rounds; back up the audited file first), redo the
+   allowed fixes, re-audit, re-check. Only if still < 70 after round 2, 🚨 alert the user.
 4b. ZERO REPETITION gate (user's rule): from `projects/<project>/work` run `python dup_check.py
    <blocks>`, `python dup_check_loose.py <blocks>`, `python concept_eq_check.py <blocks>`. Any hit
    involving the NEW unit is fixed first (back-reference instead of repeating), never appended.

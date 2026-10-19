@@ -19,8 +19,10 @@ Every reworded sentence after StealthWriter brings AI detection back (proven: 91
    and UNREADABLE sentences are fixed: StealthWriter sentence alternatives first
    (`stealthwriter_alternatives`, while the result is on the page), else the fewest words (1-4),
    never the structure. Clunky and odd-but-clear wording stay as they are.
-5. AI gate before Word: `stealthwriter_check_ai` must be >= 70 (free scans). Red after retry → 🚨
-   alert the user.
+5. AI gate before Word: `stealthwriter_check_ai` must be >= 70 (free scans). Below 70 → do NOT
+   ask (user, 2026-10-20): automatically "Humanize More" the unit's current humanized body text
+   (max 2 rounds, back up the audited version first), redo the allowed post-humanize fixes, re-audit,
+   re-check. Only if still < 70 after round 2 → 🚨 alert the user. Tell the user afterwards.
 6. Report every post-humanize change to the user as old → new.
 
 ## CODE LISTINGS (user, 2026-10-19; every book)

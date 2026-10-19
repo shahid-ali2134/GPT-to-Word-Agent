@@ -153,8 +153,9 @@ E. FIX each one: stealthwriter_alternatives(project, sentence=<its start>, new_r
    works: change the fewest words (typically 1-4: swap, insert or delete words), never the whole
    sentence or its structure. Report every change as old -> new.
 F. AI GATE before Word: stealthwriter_check_ai(project, blocks_file=<unit>) must pass (>= 70). If it
-   fails: undo the hand fixes of step E (keep alternatives), scan again; still failing -> report it
-   (the orchestrator alerts the user). The scan is free (separate quota) but clears the humanizer
+   fails: undo the hand fixes of step E (keep alternatives), scan again; still failing -> report it.
+   The orchestrator then runs "Humanize More" automatically (user, 2026-10-20: never wait for the
+   user here; max 2 rounds on the current humanized text; alert only if still < 70 after round 2). The scan is free (separate quota) but clears the humanizer
    box, so run it after all alternatives are done.
 
 ## STYLE RULES (user, 2026-10-15; apply to the ChatGPT text BEFORE humanizing, see above)
