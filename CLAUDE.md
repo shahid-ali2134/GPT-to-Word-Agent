@@ -27,6 +27,13 @@ Every reworded sentence after StealthWriter brings AI detection back (proven: 91
 ChatGPT's code goes to Word as a `code` block (Consolas, gray shaded box, thin border) exactly as
 written: never humanized, reworded or AI-scanned. Checked for correctness like equations.
 
+## VENDOR-NEUTRAL (user, 2026-10-19; every book)
+No vendor, product or framework names in code or prose (OpenAI, Anthropic, Google, LangChain, a
+specific SDK, API or model name, OPENAI_API_KEY ...): use generic interfaces such as
+`call_model(instructions, history, tools)` "that wraps whichever model service is used (a
+commercial API or a locally hosted model)". Tell ChatGPT this; fix any vendor mention BEFORE
+humanizing.
+
 ## Repo notes
 - `.git` belongs to another Windows user: run git as
   `git -c "safe.directory=F:/Upwork/Portfolio Projects/AI Agents & LLM Systems/GPT to Word Agent" ...`.

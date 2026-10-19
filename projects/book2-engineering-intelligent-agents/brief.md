@@ -67,6 +67,9 @@ Set up 2026-10-19 from Book 1's brief: every general rule carries over, Book 1's
 - Until the MCP server is restarted, run validate_blocks / docx_append / docx_health for units with
   code through `python work/mcp_cli.py <tool> '<json args>'` (fresh process with the new code).
 
+- VENDOR-NEUTRAL (user, 2026-10-19, after reviewing 2.1): no vendor/product/framework/SDK/model
+  names in code or prose. 2.1 was redone with a generic `call_model(...)` helper; later code reuses
+  it. ChatGPT was told the rule before 2.2.
 - PAUSE (user, 2026-10-19): after the first section with code (2.1) is in Word, stop and wait for
   the user to review it before writing further.
 

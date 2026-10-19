@@ -79,6 +79,9 @@ Before adding a symbol, Grep `work/ch*/*.blocks.json` (all units already written
   invented APIs (a real SDK call must exist, else use a clearly generic helper such as
   call_model and say so). Short listings (<= 30 lines, lines <= 90 chars). Refer to them
   positionally ("the listing above"); no "Listing N" numbers.
+- VENDOR-NEUTRAL (user, 2026-10-19): no vendor/product/framework/SDK/model names in code or
+  prose. Model access goes through a generic `call_model(instructions, history, tools)` helper
+  (documented in 2.1 as wrapping whichever model service is used); fix before humanizing.
 - Until the MCP server is restarted: build blocks with the new tools.blocks in a fresh Python
   process and validate/append through `python mcp_cli.py <tool> '<json>'` (work folder).
 

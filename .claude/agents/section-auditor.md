@@ -36,7 +36,8 @@ Check every block:
 3. **Math:** each equation correct and well-formed; symbols defined; notation consistent with earlier sections; no equation labels and no numbered equation references (equations are unnumbered).
 4. **Tables:** facts correct, columns consistent, header sensible, caption present, referenced in prose with the right number.
 4a. **Code blocks** (`"type": "code"`): exactly ChatGPT's code, never humanized; valid syntax,
-   names match the prose, no secrets, no invented APIs; short lines. Validate units with code via
+   names match the prose, no secrets, no invented APIs; short lines. VENDOR-NEUTRAL: no vendor,
+   product, framework, SDK or model names in code or prose (FAIL if present). Validate units with code via
    `python work/mcp_cli.py validate_blocks '<json>'` until the MCP server is restarted.
 4b. **Numbering:** figure and table numbers continue exactly from Word's (`validate_blocks` shows them); a gap or repeat is FAIL unless its cause is explained and fixed.
 5. **Figures:** open every image with Read; it matches its caption, labels spelled correctly, not a duplicate; caption is one precise sentence; referenced in prose with the right number.
