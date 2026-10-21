@@ -279,6 +279,13 @@ def _wait_for_login(page: Page):
 
     print("\n  [Browser] ChatGPT login required.")
     print("  [Browser] Please log in to ChatGPT in the browser window that just opened.")
+    try:  # user, 2026-10-22: a login wait must never be silent
+        from tools import bookdev
+        bookdev.alert("ChatGPT login needed", [
+            "ChatGPT is waiting for a login in the browser window (3 minutes).",
+        ])
+    except Exception:
+        pass
     print("  [Browser] Waiting for you to finish logging in (up to 3 minutes)...")
 
     deadline = time.time() + 180

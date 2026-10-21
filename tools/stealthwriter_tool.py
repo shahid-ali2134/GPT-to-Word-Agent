@@ -142,6 +142,26 @@ def _humanizer_ready(page: Page) -> bool:
     )
 
 
+_last_login_alert = 0.0
+
+
+def _alert_login():
+    """Ping the owner on Nexus (user, 2026-10-22: a login wait must never be silent).
+    At most one ping per 10 minutes, since callers retry the wait."""
+    global _last_login_alert
+    if time.time() - _last_login_alert < 600:
+        return
+    _last_login_alert = time.time()
+    try:
+        from tools import bookdev
+        bookdev.alert("StealthWriter login needed", [
+            "The humanizer is waiting for a StealthWriter login in the browser window.",
+            "Book work is paused until you log in; it continues by itself afterwards.",
+        ])
+    except Exception:
+        pass
+
+
 def _wait_for_login_if_needed(page: Page, progress=None):
     sign_in = page.get_by_role("link", name=re.compile(r"sign in|login|log in", re.I))
     try:
@@ -159,6 +179,7 @@ def _wait_for_login_if_needed(page: Page, progress=None):
         progress,
         "StealthWriter login may be required. Please finish logging in in the browser window.",
     )
+    _alert_login()
     deadline = time.time() + 300
     while time.time() < deadline:
         if _humanizer_ready(page):
