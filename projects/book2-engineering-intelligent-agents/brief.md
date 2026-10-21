@@ -64,6 +64,9 @@ Set up 2026-10-19 from Book 1's brief: every general rule carries over, Book 1's
   before and after). Code is NEVER humanized or reworded; the AI check and scans skip it.
 - Check code for correctness like equations (runs as written, names match the prose, no invented
   APIs presented as real). Keep listings short; prose around them is humanized as usual.
+- No added code (2026-10-20): writers fix real bugs with the smallest change and report it, but never
+  add functions or extend a listing; if the prose describes code that is not there, fix the prose
+  before humanizing. Exception kept with the user's OK ("do whats best"): 3.5 validate_plan (r06).
 - Until the MCP server is restarted, run validate_blocks / docx_append / docx_health for units with
   code through `python work/mcp_cli.py <tool> '<json args>'` (fresh process with the new code).
 
