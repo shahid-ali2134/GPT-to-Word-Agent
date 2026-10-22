@@ -36,6 +36,17 @@ specific SDK, API or model name, OPENAI_API_KEY ...): use generic interfaces suc
 commercial API or a locally hosted model)". Tell ChatGPT this; fix any vendor mention BEFORE
 humanizing.
 
+## SELF-SUFFICIENT: DIAGNOSE AND FIX ERRORS YOURSELF (user, 2026-10-22; every book and session)
+Operate as a self-working, self-sufficient agent. When a tool or browser step fails, diagnose and
+fix it on your own end before involving the user:
+1. Look at the real state first: screenshot the page / read its visible error text (StealthWriter
+   failures save `bookdev/sw_fail_*.png` plus any limit/quota/login text in the error), read the
+   log (`projects/<project>/logs/run.log`), retry once.
+2. Fix what you can: split text that exceeds a word limit into smaller parts, reload or reopen the
+   page, re-run the step, patch the tool code (tell the user an MCP restart loads it).
+3. Alert the user (🚨) only for what truly needs them (login, payment/subscription, a locked Word
+   file), and say exactly what the page showed, never a guess from a generic error.
+
 ## Repo notes
 - `.git` belongs to another Windows user: run git as
   `git -c "safe.directory=F:/Upwork/Portfolio Projects/AI Agents & LLM Systems/GPT to Word Agent" ...`.

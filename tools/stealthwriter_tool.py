@@ -696,7 +696,8 @@ def _wait_for_result_and_copy(page: Page, original_text: str, timeout_sec: int, 
 
         page.wait_for_timeout(1_000)
 
-    raise TimeoutError("Timed out waiting for StealthWriter humanized result.")
+    raise TimeoutError("Timed out waiting for StealthWriter humanized result."
+                       + _failure_snapshot(page, "humanize"))
 
 
 last_human_score: int | None = None
@@ -866,6 +867,30 @@ def _try_rehumanize(page: Page, original_text: str, timeout_sec: int, progress=N
 
 SW_DOM_DEBUG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "bookdev", "sw_dom_debug.html")
+
+_FAIL_HINT = re.compile(r"limit|exceed|maximum|upgrade|subscription|expired|log ?in|sign ?in"
+                        r"|quota|credits?|insufficient|plan", re.I)
+
+
+def _failure_snapshot(page: Page, tag: str) -> str:
+    """When a StealthWriter step fails, save a screenshot and pick up any visible
+    error text (word limit, quota, expired plan, logout) so the cause is shown in
+    the error instead of being guessed from a missing button."""
+    note = ""
+    try:
+        png = os.path.join(ROOT, "bookdev", f"sw_fail_{tag}.png")
+        page.screenshot(path=png)
+        note = f" (screenshot: {png})"
+    except Exception:
+        pass
+    try:
+        hits = [ln.strip()[:120] for ln in page.inner_text("body").splitlines()
+                if ln.strip() and _FAIL_HINT.search(ln)]
+        if hits:
+            note = " | page says: " + " / ".join(list(dict.fromkeys(hits))[:6]) + note
+    except Exception:
+        pass
+    return note
 
 # JS helpers for the result panel. Sentences are highlighted spans: green = high
 # human impact, red = high AI impact. Clicking one opens "Choose alternative"
@@ -1241,7 +1266,8 @@ def check_for_ai(text: str, timeout_sec: int = 90, progress=None) -> dict:
     _reload_humanizer(page, progress)
     box = _find_humanizer_input(page, timeout_ms=10_000)
     if box is None:
-        return {"ok": False, "error": "humanizer text box not found"}
+        return {"ok": False, "error": "humanizer text box not found"
+                + _failure_snapshot(page, "check_ai")}
     _paste_text(box, page, text)
     before = _read_scans_left(page)
     score_re = re.compile(r"Scanned with\s+V\d+\s+(\d{1,3})\s*%")
@@ -1252,7 +1278,8 @@ def check_for_ai(text: str, timeout_sec: int = 90, progress=None) -> dict:
     old_txt = old.group(0) if old else None
     btn = _find_button(page, r"check for ai", timeout_ms=10_000)
     if btn is None:
-        return {"ok": False, "error": "'Check for AI' button not found"}
+        return {"ok": False, "error": "'Check for AI' button not found"
+                + _failure_snapshot(page, "check_ai")}
     btn.click()
     t0 = time.time()
     deadline = t0 + timeout_sec
@@ -1276,7 +1303,8 @@ def check_for_ai(text: str, timeout_sec: int = 90, progress=None) -> dict:
             verdict = "AI Detected" if re.search(r"AI Detected|Detected as AI", body) else "Looks Human"
             break
     if score is None:
-        return {"ok": False, "error": f"no scan result within {timeout_sec}s"}
+        return {"ok": False, "error": f"no scan result within {timeout_sec}s"
+                + _failure_snapshot(page, "check_ai")}
     _report(progress, f"Check for AI: {score}% human ({verdict})")
     return {"ok": True, "score": score, "verdict": verdict, "words": len(text.split()),
             "scans_left": _read_scans_left(page)}

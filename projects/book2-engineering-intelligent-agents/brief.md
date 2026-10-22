@@ -73,6 +73,8 @@ Set up 2026-10-19 from Book 1's brief: every general rule carries over, Book 1's
 - VENDOR-NEUTRAL (user, 2026-10-19, after reviewing 2.1): no vendor/product/framework/SDK/model
   names in code or prose. 2.1 was redone with a generic `call_model(...)` helper; later code reuses
   it. ChatGPT was told the rule before 2.2.
+  Exception (user, 2026-10-22): 6.4 keeps its title "The Model Context Protocol" and names the
+  protocol as an open standard; still no vendor/company/product/SDK/model names anywhere.
 - PAUSE (user, 2026-10-19): after the first section with code (2.1) is in Word, stop and wait for
   the user to review it before writing further.
 
