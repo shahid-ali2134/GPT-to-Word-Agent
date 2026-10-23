@@ -611,8 +611,17 @@ async () => {
         {headers: {Authorization: 'Bearer ' + session.accessToken}});
     if (!r.ok) return null;
     const conv = await r.json();
+    // The server's current_node sometimes lags behind the newest turn (seen
+    // 2026-10-24: the new reply existed as a child of current_node but the
+    // conversation still pointed at the previous reply).  Start from the newest
+    // leaf when it is newer than current_node.
+    let start = conv.mapping[conv.current_node];
+    const t = n => (n && n.message && n.message.create_time) || 0;
+    for (const n of Object.values(conv.mapping)) {
+        if ((!n.children || !n.children.length) && t(n) > t(start)) start = n;
+    }
     const chain = [];
-    for (let n = conv.mapping[conv.current_node]; n; n = n.parent ? conv.mapping[n.parent] : null)
+    for (let n = start; n; n = n.parent ? conv.mapping[n.parent] : null)
         chain.push(n);
     chain.reverse();
     // Visible reply text = assistant text messages after the last user prompt
