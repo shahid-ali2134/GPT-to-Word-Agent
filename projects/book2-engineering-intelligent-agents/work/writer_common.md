@@ -23,6 +23,10 @@ Paths are relative to `projects/book2-engineering-intelligent-agents/`. Also fol
 - Before returning, run from projects/book2-engineering-intelligent-agents/work: `python dup_check.py <blocks>`,
   `python dup_check_loose.py <blocks>`, `python concept_eq_check.py <blocks>`. Fix every NEW: hit
   (or explain why it is a use, not a redefinition) and report the result.
+- AI SCORE LESSON (2026-10-24): every StealthWriter sentence alternative used after humanizing
+  lowers the Check-for-AI score. ch12 r01 got 43 with 5 alternatives and r05 got 57 with 8, while the
+  raw runs were 78 and 83. Use at most 3 alternatives per unit. Fix everything else with 1-4 word
+  hand fixes, and leave clunky but clear wording alone.
 - FEW SECTION REFERENCES (user, 2026-10-23; CLAUDE.md): avoid repeats by writing NEW content,
   not by citing. At most ONE "Section X.Y(.Z)" back-reference per subsection, and only where the
   earlier definition or equation is really needed. That means about 8 per full section unit and
