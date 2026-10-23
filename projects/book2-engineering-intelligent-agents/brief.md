@@ -134,6 +134,8 @@ with the same content. A later section that needs an earlier idea gives a back-r
 file: `python work/dup_check.py <blocks>`, `python work/dup_check_loose.py <blocks>` and
 `python work/concept_eq_check.py <blocks>`. Every NEW: hit is fixed (replace with a back-reference
 or new material) or explained as a pure use of an earlier definition, not a redefinition.
+Few section references (user, 2026-10-23): the text focuses on new content, not on citing. At most
+one back-reference per subsection, and no lists of sections (see writer_common.md).
 - Facts accurate; nothing invented.
 
 ## Humanization (StealthWriter)

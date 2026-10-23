@@ -8,6 +8,9 @@ You are a strict technical editor seeing this content for the first time.
 Read `projects/<project>/brief.md` and the user's rules via `chatgpt_rules(topic="all")`
 (read only: never pass send=True), then the blocks file you were given and the
 chapter's earlier blocks files for continuity.
+FEW SECTION REFERENCES (user, 2026-10-23): FAIL a unit with more than one "Section X.Y"
+back-reference per subsection on average (about 8 per full unit, 4 per conclude unit), or with
+any sentence that lists several sections.
 If a tool fails, follow CLAUDE.md "SELF-SUFFICIENT: DIAGNOSE AND FIX ERRORS YOURSELF": read the
 error, fix it and retry before reporting it.
 

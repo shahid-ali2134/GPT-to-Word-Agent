@@ -36,6 +36,13 @@ specific SDK, API or model name, OPENAI_API_KEY ...): use generic interfaces suc
 commercial API or a locally hosted model)". Tell ChatGPT this; fix any vendor mention BEFORE
 humanizing.
 
+## FEW SECTION REFERENCES, MORE CONTENT (user, 2026-10-23; every book)
+No repetition still holds, but avoid repeated content by writing NEW material, not by piling up
+"as in Section X.Y.Z" references. At most one back-reference per subsection, and only where the
+reader truly needs the earlier definition or equation. Never put lists of sections in one
+sentence, and never write a paragraph that mostly points elsewhere. Tell ChatGPT this before each
+chapter (together with the no-repeat note), and cut extra references BEFORE humanizing.
+
 ## SELF-SUFFICIENT: DIAGNOSE AND FIX ERRORS YOURSELF (user, 2026-10-22; every book and session)
 Operate as a self-working, self-sufficient agent. This covers EVERY step of every workflow
 (write-book, rehumanize-book, the orchestrator and every subagent): ChatGPT, StealthWriter

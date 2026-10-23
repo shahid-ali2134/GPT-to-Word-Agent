@@ -23,6 +23,11 @@ Paths are relative to `projects/book2-engineering-intelligent-agents/`. Also fol
 - Before returning, run from projects/book2-engineering-intelligent-agents/work: `python dup_check.py <blocks>`,
   `python dup_check_loose.py <blocks>`, `python concept_eq_check.py <blocks>`. Fix every NEW: hit
   (or explain why it is a use, not a redefinition) and report the result.
+- FEW SECTION REFERENCES (user, 2026-10-23; CLAUDE.md): avoid repeats by writing NEW content,
+  not by citing. At most ONE "Section X.Y(.Z)" back-reference per subsection, and only where the
+  earlier definition or equation is really needed. That means about 8 per full section unit and
+  about 4 in a conclude unit. Never list several sections in one sentence, and never write a
+  paragraph that mostly points elsewhere. Cut extras before humanizing. Report the count.
 
 ## RESERVED SYMBOLS (already used in Word; never reuse with a different meaning)
 \rho utilization, \lambda arrival rate, \mu service rate (reuse only with these meanings);
