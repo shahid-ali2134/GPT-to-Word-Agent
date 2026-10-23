@@ -36,8 +36,14 @@ specific SDK, API or model name, OPENAI_API_KEY ...): use generic interfaces suc
 commercial API or a locally hosted model)". Tell ChatGPT this; fix any vendor mention BEFORE
 humanizing.
 
-## FEW SECTION REFERENCES, MORE CONTENT (user, 2026-10-23; every book)
-No repetition still holds, but avoid repeated content by writing NEW material, not by piling up
+## ZERO REPETITION, FEW SECTION REFERENCES (user, 2026-10-14 / 2026-10-23; every book)
+Nothing may repeat anything already in the book: no equation (even renamed or in another form),
+re-explained concept or definition, figure of the same thing, table or code with the same content.
+Gate before every docx_append, from `projects/<project>/work`: `python dup_check.py <blocks>`,
+`python dup_check_loose.py <blocks>` and `python concept_eq_check.py <blocks>`. Every NEW: hit is
+fixed first. Send ChatGPT a no-repeat note listing the overlapping earlier sections before each
+chapter.
+Avoid repeated content by writing NEW material, not by piling up
 "as in Section X.Y.Z" references. At most one back-reference per subsection, and only where the
 reader truly needs the earlier definition or equation. Never put lists of sections in one
 sentence, and never write a paragraph that mostly points elsewhere. Tell ChatGPT this before each
