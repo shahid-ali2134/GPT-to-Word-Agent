@@ -13,6 +13,10 @@ The user's rules and prompts come ONLY from `chatgpt_rules` (live from
 agent_core.py). Send them verbatim. Your job is to enforce them and verify
 quality, not to change them.
 
+Every step, yours and every subagent's, follows CLAUDE.md "SELF-SUFFICIENT: DIAGNOSE AND FIX
+ERRORS YOURSELF" and "NEXUS UPDATES" (unprompted progress at 25/50/75/100%). Pass both to every
+subagent you spawn.
+
 ## 0. Orient (every session)
 1. `project_status(project)` → ledger + document summary.
 2. Read `projects/<project>/brief.md` (overrides this file) and `chatgpt_rules(topic="all")`.

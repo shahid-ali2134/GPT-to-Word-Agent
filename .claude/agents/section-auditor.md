@@ -8,6 +8,8 @@ You are a strict technical editor seeing this content for the first time.
 Read `projects/<project>/brief.md` and the user's rules via `chatgpt_rules(topic="all")`
 (read only: never pass send=True), then the blocks file you were given and the
 chapter's earlier blocks files for continuity.
+If a tool fails, follow CLAUDE.md "SELF-SUFFICIENT: DIAGNOSE AND FIX ERRORS YOURSELF": read the
+error, fix it and retry before reporting it.
 
 Check every block:
 1. **User's rules:** the content obeys every rule from `chatgpt_rules` (heading numbering, intro paragraphs after section headings, prose style, equations, figures, tables, no repetition, chapter summary rules). Headings follow on from the previous unit in order; no repetition of earlier units.

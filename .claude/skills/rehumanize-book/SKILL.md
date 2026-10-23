@@ -12,6 +12,9 @@ edited after humanizing. Chapter 1 redone with this procedure scored 72-100%.
 Tools: `projects/<project>/work/rehumanize_book.py` and `style_cleanup.py` (a new project copies
 `projects/book1-engineering-intelligent-systems/work/*.py` into its own `work/`). Run them from that `work` folder. The Word file path
 is `config.json -> projects.<project>.word_file_path`. Word must be closed when writing.
+Every failed step follows CLAUDE.md "SELF-SUFFICIENT: DIAGNOSE AND FIX ERRORS YOURSELF" (read the
+real page or log, fix it and retry, and alert 🚨 only for login, payment or a locked file), and the
+"NEXUS UPDATES" rule (progress at every 25%).
 
 ## Once per book
 1. Back up the Word file to `projects/<project>/backups/<timestamp>_before_rehumanize_all.docx`.

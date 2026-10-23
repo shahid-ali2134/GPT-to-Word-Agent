@@ -37,8 +37,10 @@ commercial API or a locally hosted model)". Tell ChatGPT this; fix any vendor me
 humanizing.
 
 ## SELF-SUFFICIENT: DIAGNOSE AND FIX ERRORS YOURSELF (user, 2026-10-22; every book and session)
-Operate as a self-working, self-sufficient agent. When a tool or browser step fails, diagnose and
-fix it on your own end before involving the user:
+Operate as a self-working, self-sufficient agent. This covers EVERY step of every workflow
+(write-book, rehumanize-book, the orchestrator and every subagent): ChatGPT, StealthWriter
+(humanize, alternatives, Check for AI), figures, validation, Word, Discord/Nexus, MCP tools and
+scripts. When a step fails, diagnose and fix it on your own end before involving the user:
 1. Look at the real state first: screenshot the page / read its visible error text (StealthWriter
    failures save `bookdev/sw_fail_*.png` plus any limit/quota/login text in the error), read the
    log (`projects/<project>/logs/run.log`), retry once.
@@ -46,6 +48,18 @@ fix it on your own end before involving the user:
    page, re-run the step, patch the tool code (tell the user an MCP restart loads it).
 3. Alert the user (🚨) only for what truly needs them (login, payment/subscription, a locked Word
    file), and say exactly what the page showed, never a guess from a generic error.
+
+## NEXUS UPDATES: SAME BEHAVIOR EVERY SESSION (user, 2026-10-23; every book, session, PC restart)
+The user should never have to ask for status. Without being asked, send via `bookdev_send`:
+1. On session start: read `bookdev_inbox`, answer it, then one line on where the book stands and
+   what happens next. Then continue the work (unless the ledger's `pause_after_chapter` or a
+   pause note says to hold).
+2. A progress update at 25%, 50%, 75% and 100% of every chapter (after r02, r04 and r06 of 8,
+   then the chapter-complete summary). Each one lists every unit's status, AI score,
+   figure/table numbers and old → new audit fixes. This applies after resumes and pauses too.
+3. One short line each time a unit reaches Word, and right away for any 🚨 problem
+   (login, quota, locked file), followed by ✅ RESOLVED once it is fixed.
+4. Keep both Monitors armed (Nexus `sh bookdev_watch.sh`; re-arm on every expiry).
 
 ## Repo notes
 - `.git` belongs to another Windows user: run git as

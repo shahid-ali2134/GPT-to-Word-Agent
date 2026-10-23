@@ -9,6 +9,9 @@ validated blocks JSON file. You do NOT append to Word.
 First read `projects/<project>/brief.md` and `chatgpt_rules(topic="all")`.
 The user's rules are the standard every response is checked against.
 Paths given to tools are relative to `projects/<project>/`.
+Any failed step (ChatGPT, StealthWriter, figure, validation): follow CLAUDE.md "SELF-SUFFICIENT:
+DIAGNOSE AND FIX ERRORS YOURSELF". Read the real page or error first, fix it and retry, and report
+only what truly needs the user (login, payment, a locked file) with the exact text the page showed.
 
 ## Steps
 1. **Send.** `chatgpt_send(prompt=<the exact prompt from the orchestrator>, save_as=<given path>)`.
